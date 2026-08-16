@@ -23,11 +23,12 @@ const versionCode = getVersionCode();
 module.exports = {
   expo: {
     name: 'Grey Sky',
-    slug: 'umbra',
+    slug: 'grey-sky',
+    owner: 'brannonglover',
     version,
     orientation: 'portrait',
     icon: './assets/images/icon.png',
-    scheme: 'umbra',
+    scheme: 'greysky',
     userInterfaceStyle: 'light',
     newArchEnabled: true,
     splash: {
@@ -41,7 +42,7 @@ module.exports = {
         NSLocationWhenInUseUsageDescription:
           'Grey Sky uses your location to show hyperlocal minute-by-minute weather at your exact spot.',
       },
-      bundleIdentifier: 'com.brannonglover.umbra',
+      bundleIdentifier: 'com.brannonglover.greysky',
       buildNumber,
     },
     android: {
@@ -58,6 +59,7 @@ module.exports = {
         'android.permission.ACCESS_COARSE_LOCATION',
         'android.permission.ACCESS_FINE_LOCATION',
       ],
+      package: 'com.brannonglover.greysky',
       versionCode,
     },
     web: {
@@ -78,6 +80,11 @@ module.exports = {
     ],
     experiments: {
       typedRoutes: true,
+    },
+    extra: {
+      eas: {
+        projectId: 'acb4334f-b104-47a3-9091-d20e50c9011e',
+      },
     },
   },
 };
