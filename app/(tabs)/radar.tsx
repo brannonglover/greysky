@@ -40,7 +40,9 @@ const styles = StyleSheet.create({
       letterSpacing: -0.15,
     },
     center: {
+      ...StyleSheet.absoluteFillObject,
       alignItems: 'center',
+      justifyContent: 'center',
     },
     error: {
       color: colors.text,
@@ -49,26 +51,27 @@ const styles = StyleSheet.create({
       borderRadius: 10,
     },
     legend: {
-      flexDirection: 'row',
+      alignSelf: 'flex-start',
       alignItems: 'center',
-      alignSelf: 'center',
-      gap: 8,
+      gap: 6,
+      marginTop: 14,
       backgroundColor: colors.overlay,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 12,
       borderRadius: 20,
     },
     legendLabel: {
       color: colors.text,
-      fontSize: 12,
+      fontSize: 11,
+      fontWeight: '600',
     },
     swatches: {
-      flexDirection: 'row',
-      gap: 3,
+      alignItems: 'center',
+      gap: 2,
     },
     swatch: {
-      width: 14,
-      height: 8,
+      width: 10,
+      height: 18,
       borderRadius: 2,
     },
     controls: {
@@ -158,6 +161,15 @@ export default function RadarScreen() {
         <View style={styles.top}>
           <Text style={styles.title}>Radar</Text>
           <Text style={styles.place}>{placeName}</Text>
+          <View style={styles.legend} pointerEvents="none">
+            <Text style={styles.legendLabel}>Heavy</Text>
+            <View style={styles.swatches}>
+              {[...LEGEND].reverse().map((color) => (
+                <View key={color} style={[styles.swatch, { backgroundColor: color }]} />
+              ))}
+            </View>
+            <Text style={styles.legendLabel}>Light</Text>
+          </View>
         </View>
         {!frame && !error ? (
           <View style={styles.center}>
@@ -169,15 +181,6 @@ export default function RadarScreen() {
             <Text style={styles.error}>{error}</Text>
           </View>
         ) : null}
-        <View style={styles.legend}>
-          <Text style={styles.legendLabel}>Light</Text>
-          <View style={styles.swatches}>
-            {LEGEND.map((color) => (
-              <View key={color} style={[styles.swatch, { backgroundColor: color }]} />
-            ))}
-          </View>
-          <Text style={styles.legendLabel}>Heavy</Text>
-        </View>
         <View style={styles.controls}>
           <Pressable
             onPress={() => setPlaying((value) => !value)}
