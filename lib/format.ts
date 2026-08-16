@@ -1,0 +1,61 @@
+export function formatHour(iso: string): string {
+  const date = new Date(iso);
+  const hours = date.getHours();
+  if (hours === 0) return '12 AM';
+  if (hours === 12) return '12 PM';
+  return hours < 12 ? `${hours} AM` : `${hours - 12} PM`;
+}
+
+export function formatWeekday(iso: string, index: number): string {
+  if (index === 0) return 'Today';
+  const datePart = iso.split('T')[0];
+  const [year, month, day] = datePart.split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', { weekday: 'long' });
+}
+
+export function formatWeekdayShort(iso: string, index: number): string {
+  if (index === 0) return 'TODAY';
+  const datePart = iso.split('T')[0];
+  const [year, month, day] = datePart.split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
+}
+
+export function formatSunsetIn(sunsetIso: string): string {
+  const ms = new Date(sunsetIso).getTime() - Date.now();
+  const clock = formatClock(sunsetIso);
+  if (!Number.isFinite(ms) || ms <= 0) return `Sunset ${clock}`;
+  const hours = ms / 3_600_000;
+  const whole = Math.floor(hours);
+  const quarter = Math.round((hours - whole) * 4) / 4;
+  const fraction =
+    quarter === 0.25 ? '¼' : quarter === 0.5 ? '½' : quarter === 0.75 ? '¾' : '';
+  const amount = quarter === 1 ? `${whole + 1}` : `${whole}${fraction}`;
+  return `Sunset in ${amount} hours (${clock})`;
+}
+
+export function formatClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+export function formatRadarTime(unixSec: number): { clock: string; relative: string } {
+  const clock = new Date(unixSec * 1000).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const deltaMin = Math.round((unixSec * 1000 - Date.now()) / 60_000);
+  if (Math.abs(deltaMin) < 5) return { clock, relative: 'Now' };
+  if (deltaMin > 0) return { clock, relative: `+${deltaMin} min` };
+  return { clock, relative: `−${Math.abs(deltaMin)} min` };
+}
+
+export function relativeUpdated(date: Date): string {
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 15) return 'Updated just now';
+  if (seconds < 60) return `Updated ${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `Updated ${minutes}m ago`;
+  return `Updated ${Math.round(minutes / 60)}h ago`;
+}
