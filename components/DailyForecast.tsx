@@ -84,13 +84,14 @@ const styles = StyleSheet.create({
       borderRadius: radii.pill,
       borderCurve: 'continuous',
       borderWidth: 1,
-      borderColor: colors.accent,
+      borderColor: 'rgba(244, 240, 230, 0.35)',
     },
     pillActive: {
-      backgroundColor: colors.accent,
+      backgroundColor: colors.text,
+      borderColor: colors.text,
     },
     pillText: {
-      color: colors.accent,
+      color: colors.text,
       fontSize: 12,
       fontWeight: '600',
       letterSpacing: 0.25,

@@ -1,57 +1,51 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Tabs } from 'expo-router';
+import { NativeTabs, Icon, Label, VectorIcon } from 'expo-router/unstable-native-tabs';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { DynamicColorIOS, Platform } from 'react-native';
 
-import { colors } from '@/constants/theme';
+const tabInk =
+  Platform.OS === 'ios'
+    ? DynamicColorIOS({ dark: '#FFFFFF', light: '#1C1915' })
+    : '#FFFFFF';
 
 export default function TabLayout() {
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.tabInactive,
-        tabBarStyle: {
-          backgroundColor: colors.bg,
-          borderTopColor: colors.divider,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          height: 84,
-          paddingTop: 6,
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '600',
-          letterSpacing: 0.1,
-        },
+    <NativeTabs
+      tintColor={tabInk}
+      blurEffect="systemThinMaterial"
+      backgroundColor="rgba(8, 14, 20, 0.22)"
+      disableTransparentOnScrollEdge
+      minimizeBehavior="onScrollDown"
+      labelVisibilityMode="labeled"
+      labelStyle={{
+        default: { color: 'rgba(255, 255, 255, 0.72)' },
+        selected: { color: tabInk },
+      }}
+      iconColor={{
+        default: 'rgba(255, 255, 255, 0.72)',
+        selected: tabInk,
       }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Forecast',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'sparkles' : 'sparkles-outline'} size={24} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="radar"
-        options={{
-          title: 'Map',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'globe' : 'globe-outline'} size={24} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: 'Notifications',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'cloud' : 'cloud-outline'} size={24} color={color} />
-          ),
-        }}
-      />
-    </Tabs>
+      <NativeTabs.Trigger name="index">
+        <Label>Forecast</Label>
+        <Icon
+          sf={{ default: 'sparkles', selected: 'sparkles' }}
+          androidSrc={<VectorIcon family={Ionicons} name="sparkles" />}
+        />
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="radar">
+        <Label>Map</Label>
+        <Icon
+          sf={{ default: 'globe', selected: 'globe.fill' }}
+          androidSrc={<VectorIcon family={Ionicons} name="globe-outline" />}
+        />
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="settings">
+        <Label>Notifications</Label>
+        <Icon
+          sf={{ default: 'cloud', selected: 'cloud.fill' }}
+          androidSrc={<VectorIcon family={Ionicons} name="cloud-outline" />}
+        />
+      </NativeTabs.Trigger>
+    </NativeTabs>
   );
 }

@@ -21,6 +21,8 @@ import { ForecastHeader } from '@/components/ForecastHeader';
 import { ForecastMap } from '@/components/ForecastMap';
 import { HourlyTimeline } from '@/components/HourlyTimeline';
 import { PrecipitationChart } from '@/components/PrecipitationChart';
+import { RainField } from '@/components/RainField';
+import { SkyBackdrop } from '@/components/SkyBackdrop';
 import { colors, pressed, radii, spacing } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { formatSunsetIn } from '@/lib/format';
@@ -30,11 +32,16 @@ import { formatPrecip, formatTemp } from '@/lib/units';
 const styles = StyleSheet.create({
     safe: {
       flex: 1,
-      backgroundColor: colors.bg,
+      backgroundColor: 'transparent',
+    },
+    screen: {
+      flex: 1,
     },
     content: {
+      paddingBottom: 108,
+    },
+    padded: {
       paddingHorizontal: spacing.md,
-      paddingBottom: 40,
     },
     dailyBlock: {
       marginTop: 28,
@@ -101,6 +108,7 @@ export default function ForecastScreen() {
     error,
     permission,
     settings,
+    sky,
     refresh,
     requestPermission,
   } = useApp();
@@ -113,59 +121,65 @@ export default function ForecastScreen() {
 
   if (permission !== PermissionStatus.GRANTED && selectedId === 'current' && !weather) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.permission}>
-          <Ionicons name="location-outline" size={42} color={colors.accent} />
-          <Text style={styles.permissionTitle}>Hyperlocal weather needs your location</Text>
-          <Text style={styles.permissionBody}>
-            Grey Sky uses GPS and radar nowcast — the same kind of hyperlocal data Dark Sky was built on.
-          </Text>
-          <Pressable
-            style={({ pressed: isPressed }) => [styles.primary, isPressed && pressed]}
-            onPress={requestPermission}>
-            <Text style={styles.primaryText}>Enable location</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed: isPressed }) => isPressed && pressed}
-            onPress={() => router.push('/locations')}>
-            <Text style={styles.link}>Search for a city instead</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
+      <SkyBackdrop>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.permission}>
+            <Ionicons name="location-outline" size={42} color={colors.accent} />
+            <Text style={styles.permissionTitle}>Hyperlocal weather needs your location</Text>
+            <Text style={styles.permissionBody}>
+              Grey Sky uses GPS and radar nowcast — the same kind of hyperlocal data Dark Sky was built on.
+            </Text>
+            <Pressable
+              style={({ pressed: isPressed }) => [styles.primary, isPressed && pressed]}
+              onPress={requestPermission}>
+              <Text style={styles.primaryText}>Enable location</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed: isPressed }) => isPressed && pressed}
+              onPress={() => router.push('/locations')}>
+              <Text style={styles.link}>Search for a city instead</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </SkyBackdrop>
     );
   }
 
   if (loading && !weather) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.centered}>
-          <ActivityIndicator color={colors.accent} />
-          <Text style={styles.muted}>Reading the sky…</Text>
-        </View>
-      </SafeAreaView>
+      <SkyBackdrop>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.centered}>
+            <ActivityIndicator color={colors.accent} />
+            <Text style={styles.muted}>Reading the sky…</Text>
+          </View>
+        </SafeAreaView>
+      </SkyBackdrop>
     );
   }
 
   if (!weather) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.permission}>
-          <Text style={styles.permissionTitle}>{error ?? 'Weather unavailable'}</Text>
-          <Text style={styles.permissionBody}>
-            You can retry GPS, or search for a city to load a hyperlocal forecast.
-          </Text>
-          <Pressable
-            style={({ pressed: isPressed }) => [styles.primary, isPressed && pressed]}
-            onPress={() => refresh(true)}>
-            <Text style={styles.primaryText}>Try again</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed: isPressed }) => isPressed && pressed}
-            onPress={() => router.push('/locations')}>
-            <Text style={styles.link}>Search for a city</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
+      <SkyBackdrop>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.permission}>
+            <Text style={styles.permissionTitle}>{error ?? 'Weather unavailable'}</Text>
+            <Text style={styles.permissionBody}>
+              You can retry GPS, or search for a city to load a hyperlocal forecast.
+            </Text>
+            <Pressable
+              style={({ pressed: isPressed }) => [styles.primary, isPressed && pressed]}
+              onPress={() => refresh(true)}>
+              <Text style={styles.primaryText}>Try again</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed: isPressed }) => isPressed && pressed}
+              onPress={() => router.push('/locations')}>
+              <Text style={styles.link}>Search for a city</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </SkyBackdrop>
     );
   }
 
@@ -173,29 +187,38 @@ export default function ForecastScreen() {
   const shareMessage = `${placeName}: ${formatTemp(weather.current.temperature, settings.units)} · ${weather.nowcastSummary}`;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ForecastHeader shareMessage={shareMessage} />
-      <ScrollView
-        contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl tintColor={colors.accent} refreshing={refreshing} onRefresh={onRefresh} />
-        }>
-        <CurrentHero current={weather.current} units={settings.units} />
-        <AlertBanner alerts={weather.alerts} />
-        <ForecastMap />
-        <PrecipitationChart minutes={weather.minutely} summary={weather.nowcastSummary} />
-        <HourlyTimeline hours={weather.hourly} units={settings.units} />
-        <View style={styles.dailyBlock}>
-          <DailyForecast
-            days={weather.daily}
-            units={settings.units}
-            metric={metric}
-            onMetricChange={setMetric}
-            rainLabel={`Rain: ${formatPrecip(today?.precipitationSum ?? 0, settings.units)}`}
-            sunsetLabel={today ? formatSunsetIn(today.sunset) : ''}
-          />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    <SkyBackdrop>
+      <View style={styles.screen} collapsable={false}>
+        <RainField intensity={sky.rain} />
+        <SafeAreaView style={styles.safe} edges={['top']} collapsable={false}>
+          <ForecastHeader shareMessage={shareMessage} />
+          <ScrollView
+            contentContainerStyle={styles.content}
+            refreshControl={
+              <RefreshControl tintColor={colors.text} refreshing={refreshing} onRefresh={onRefresh} />
+            }>
+            <View style={styles.padded}>
+              <CurrentHero current={weather.current} units={settings.units} />
+              <AlertBanner alerts={weather.alerts} />
+            </View>
+            <ForecastMap />
+            <View style={styles.padded}>
+              <PrecipitationChart minutes={weather.minutely} summary={weather.nowcastSummary} />
+              <HourlyTimeline hours={weather.hourly} units={settings.units} />
+              <View style={styles.dailyBlock}>
+                <DailyForecast
+                  days={weather.daily}
+                  units={settings.units}
+                  metric={metric}
+                  onMetricChange={setMetric}
+                  rainLabel={`Rain: ${formatPrecip(today?.precipitationSum ?? 0, settings.units)}`}
+                  sunsetLabel={today ? formatSunsetIn(today.sunset, weather.timezone) : ''}
+                />
+              </View>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </View>
+    </SkyBackdrop>
   );
 }

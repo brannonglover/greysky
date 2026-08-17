@@ -1,3 +1,4 @@
+import { wallHour, zonedIsoToMs } from './time';
 import type { DayPoint, HourPoint, MinutePoint } from './types';
 import { isPrecipCode, isSnowCode, labelForCode } from './wmo';
 
@@ -25,19 +26,20 @@ export function interpolateMinutely(
   probability: (number | null)[],
   weatherCode: (number | null)[],
   snowfall: (number | null)[],
+  timeZone?: string,
 ): MinutePoint[] {
   if (!times.length) return [];
 
   const now = Date.now();
   let start = 0;
   for (let i = 0; i < times.length; i += 1) {
-    if (new Date(times[i]).getTime() <= now) start = i;
+    if (zonedIsoToMs(times[i], timeZone) <= now) start = i;
   }
 
   const points = times.slice(start).map((time, offset) => {
     const i = start + offset;
     return {
-      t: new Date(time).getTime(),
+      t: zonedIsoToMs(time, timeZone),
       precipitationMm: num(precipitation[i]),
       probability: num(probability[i]),
       isSnow: isSnowCode(num(weatherCode[i])) || num(snowfall[i]) > 0,
@@ -124,12 +126,12 @@ export function daySummary(hours: HourPoint[], day: DayPoint | undefined): strin
 
   const todayHours = hours.slice(0, 24);
   const precipHours = todayHours.filter((h) => h.precipitation >= 0.2 || h.precipitationProbability >= 45);
-  const morning = precipHours.filter((h) => new Date(h.time).getHours() < 12).length;
+  const morning = precipHours.filter((h) => wallHour(h.time) < 12).length;
   const afternoon = precipHours.filter((h) => {
-    const hr = new Date(h.time).getHours();
+    const hr = wallHour(h.time);
     return hr >= 12 && hr < 18;
   }).length;
-  const evening = precipHours.filter((h) => new Date(h.time).getHours() >= 18).length;
+  const evening = precipHours.filter((h) => wallHour(h.time) >= 18).length;
   const snow = day.snowfallSum > 0.4;
   const precipWord = snow ? 'snow' : 'rain';
 

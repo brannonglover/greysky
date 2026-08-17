@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, hairline, pressed, radii, spacing } from '@/constants/theme';
+import { SkyBackdrop } from '@/components/SkyBackdrop';
 import { useApp } from '@/context/AppContext';
 import { ensureNotificationSetup } from '@/lib/notifications';
 import type { AlertPrefs } from '@/lib/types';
@@ -49,7 +50,8 @@ export default function SettingsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SkyBackdrop>
+      <SafeAreaView style={styles.safe} edges={['top']} collapsable={false}>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>Notifications</Text>
         <Text style={styles.lede}>
@@ -99,18 +101,19 @@ export default function SettingsScreen() {
           US uses °F, mph, and inches. Metric uses °C, km/h, and millimeters.
         </Text>
       </ScrollView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </SkyBackdrop>
   );
 }
 
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: 'transparent',
   },
   content: {
     padding: spacing.md,
-    paddingBottom: 48,
+    paddingBottom: 108,
   },
   title: {
     color: colors.text,

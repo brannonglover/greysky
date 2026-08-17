@@ -46,18 +46,18 @@ const styles = StyleSheet.create({
     },
     summary: {
       color: colors.text,
-      fontSize: 16,
-      fontWeight: '400',
-      letterSpacing: -0.2,
-      lineHeight: 22,
-      marginTop: 2,
-      paddingHorizontal: 2,
+      fontSize: 17,
+      fontWeight: '500',
+      letterSpacing: -0.25,
+      lineHeight: 23,
+      marginTop: 4,
+      paddingHorizontal: 8,
       textAlign: 'center',
     },
     rule: {
       height: StyleSheet.hairlineWidth,
       backgroundColor: colors.divider,
-      marginTop: 16,
+      marginTop: 18,
     },
 });
 

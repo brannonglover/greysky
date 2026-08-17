@@ -67,6 +67,7 @@ export function DarkSkyRadar({
       }),
     [latitude, longitude, zoom, intervalMs, scrollEnabled],
   );
+  const source = useMemo(() => ({ html, baseUrl: 'https://unpkg.com' }), [html]);
 
   useEffect(() => {
     setReady(false);
@@ -121,7 +122,7 @@ export function DarkSkyRadar({
       <WebView
         ref={webViewRef}
         originWhitelist={['*']}
-        source={{ html, baseUrl: 'https://unpkg.com' }}
+        source={source}
         containerStyle={[styles.fill, { backgroundColor: colors.mapBg }]}
         style={[styles.fill, { backgroundColor: colors.mapBg }]}
         scrollEnabled={scrollEnabled}

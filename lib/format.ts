@@ -1,9 +1,20 @@
+import { wallHour, wallMinute, zonedIsoToMs } from '@/lib/time';
+
+function hour12(hours: number): number {
+  const h = hours % 12;
+  return h === 0 ? 12 : h;
+}
+
+function meridiem(hours: number): 'AM' | 'PM' {
+  return hours < 12 ? 'AM' : 'PM';
+}
+
+function formatHourNumber(hours: number): string {
+  return `${hour12(hours)} ${meridiem(hours)}`;
+}
+
 export function formatHour(iso: string): string {
-  const date = new Date(iso);
-  const hours = date.getHours();
-  if (hours === 0) return '12 AM';
-  if (hours === 12) return '12 PM';
-  return hours < 12 ? `${hours} AM` : `${hours - 12} PM`;
+  return formatHourNumber(wallHour(iso));
 }
 
 export function formatWeekday(iso: string, index: number): string {
@@ -20,8 +31,8 @@ export function formatWeekdayShort(iso: string, index: number): string {
   return new Date(year, month - 1, day).toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
 }
 
-export function formatSunsetIn(sunsetIso: string): string {
-  const ms = new Date(sunsetIso).getTime() - Date.now();
+export function formatSunsetIn(sunsetIso: string, timeZone?: string): string {
+  const ms = zonedIsoToMs(sunsetIso, timeZone) - Date.now();
   const clock = formatClock(sunsetIso);
   if (!Number.isFinite(ms) || ms <= 0) return `Sunset ${clock}`;
   const hours = ms / 3_600_000;
@@ -34,10 +45,12 @@ export function formatSunsetIn(sunsetIso: string): string {
 }
 
 export function formatClock(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const hours = wallHour(iso);
+  const minutes = wallMinute(iso);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+  return `${formatHourNumber(hours).replace(/ (AM|PM)$/, '')}:${String(minutes).padStart(2, '0')} ${meridiem(hours)}`;
 }
 
 export function formatRadarTime(unixSec: number): { clock: string; relative: string } {

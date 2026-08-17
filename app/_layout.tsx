@@ -1,4 +1,4 @@
-import { DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -16,12 +16,12 @@ export const unstable_settings = {
 };
 
 SplashScreen.preventAutoHideAsync();
-Appearance.setColorScheme(null);
+Appearance.setColorScheme('dark');
 
 const navigationTheme = {
-  ...DefaultTheme,
+  ...DarkTheme,
   colors: {
-    ...DefaultTheme.colors,
+    ...DarkTheme.colors,
     background: colors.bg,
     card: colors.bg,
     text: colors.text,
@@ -32,7 +32,7 @@ const navigationTheme = {
 
 export default function RootLayout() {
   useEffect(() => {
-    Appearance.setColorScheme(null);
+    Appearance.setColorScheme('dark');
     SplashScreen.hideAsync();
   }, []);
 
@@ -40,7 +40,7 @@ export default function RootLayout() {
     <AppProvider>
       <ThemeProvider value={navigationTheme}>
         <View style={styles.root}>
-          <StatusBar style="dark" />
+          <StatusBar style="light" />
           <Stack
             screenOptions={{
               headerShown: false,

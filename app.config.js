@@ -29,7 +29,7 @@ module.exports = {
     orientation: 'portrait',
     icon: './assets/images/icon.png',
     scheme: 'greysky',
-    userInterfaceStyle: 'light',
+    userInterfaceStyle: 'dark',
     newArchEnabled: true,
     splash: {
       image: './assets/images/splash-icon.png',

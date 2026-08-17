@@ -1,6 +1,7 @@
 import * as Location from 'expo-location';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
+import { skyFromWeather, type SkyPalette } from '@/lib/sky';
 import type { SavedLocation, Settings, WeatherBundle } from '@/lib/types';
 import { syncWeatherNotifications } from '@/lib/notifications';
 import {
@@ -29,6 +30,7 @@ type AppState = {
   permission: PermissionState;
   lastUpdated: Date | null;
   coords: { latitude: number; longitude: number } | null;
+  sky: SkyPalette;
   refresh: (force?: boolean) => Promise<void>;
   requestPermission: () => Promise<void>;
   updateSettings: (patch: Partial<Settings> | ((prev: Settings) => Settings)) => Promise<void>;
@@ -268,6 +270,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [savedLocations, selectCurrentLocation, selectedId],
   );
 
+  const sky = useMemo(() => skyFromWeather(weather), [weather]);
+
   const value = useMemo<AppState>(
     () => ({
       settings,
@@ -282,6 +286,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       permission,
       lastUpdated,
       coords,
+      sky,
       refresh,
       requestPermission,
       updateSettings,
@@ -308,6 +313,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       selectSavedLocation,
       selectedId,
       settings,
+      sky,
       updateSettings,
       weather,
     ],

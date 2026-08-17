@@ -1,3 +1,4 @@
+import { zonedIsoToMs } from './time';
 import type { CurrentWeather, DayPoint, HourPoint, WeatherAlert, WeatherBundle } from './types';
 import { daySummary, interpolateMinutely, nowcastSummary } from './nowcast';
 
@@ -120,10 +121,11 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
   };
 
   const hourlyTimes = arr<string>(data.hourly.time);
+  const timeZone = data.timezone;
   const now = Date.now() - 30 * 60_000;
   const hourlyStart = Math.max(
     0,
-    hourlyTimes.findIndex((t) => new Date(t).getTime() >= now),
+    hourlyTimes.findIndex((t) => zonedIsoToMs(t, timeZone) >= now),
   );
 
   const hourly: HourPoint[] = hourlyTimes.slice(hourlyStart, hourlyStart + 48).map((time, offset) => {
@@ -174,6 +176,7 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
     arr<number | null>(data.minutely_15?.precipitation_probability),
     arr<number | null>(data.minutely_15?.weather_code),
     arr<number | null>(data.minutely_15?.snowfall),
+    timeZone,
   );
 
   if (minutely.length === 0 && hourly.length > 0) {
@@ -186,6 +189,7 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
         [first.precipitationProbability, second.precipitationProbability],
         [first.weatherCode, second.weatherCode],
         [0, 0],
+        timeZone,
       ),
     );
   }

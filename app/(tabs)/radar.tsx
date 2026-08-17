@@ -31,6 +31,8 @@ const styles = StyleSheet.create({
       fontSize: 28,
       fontWeight: '600',
       letterSpacing: -0.6,
+      textShadowColor: 'rgba(0,0,0,0.35)',
+      textShadowRadius: 10,
     },
     place: {
       color: colors.textSecondary,
@@ -38,6 +40,8 @@ const styles = StyleSheet.create({
       fontSize: 16,
       lineHeight: 22,
       letterSpacing: -0.15,
+      textShadowColor: 'rgba(0,0,0,0.35)',
+      textShadowRadius: 8,
     },
     center: {
       ...StyleSheet.absoluteFillObject,
@@ -76,7 +80,7 @@ const styles = StyleSheet.create({
     },
     controls: {
       margin: 16,
-      marginBottom: 8,
+      marginBottom: 12,
       backgroundColor: 'rgba(44,44,46,0.92)',
       borderRadius: 18,
       padding: 14,

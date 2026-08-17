@@ -22,8 +22,8 @@ function formatPlace(name: string, subtitle?: string): string {
 const styles = StyleSheet.create({
     wrap: {
       paddingHorizontal: spacing.md,
-      paddingTop: 4,
-      paddingBottom: 8,
+      paddingTop: 8,
+      paddingBottom: 4,
     },
     row: {
       flexDirection: 'row',
@@ -39,9 +39,9 @@ const styles = StyleSheet.create({
     title: {
       flex: 1,
       color: colors.text,
-      fontSize: 17,
-      fontWeight: '600',
-      letterSpacing: -0.35,
+      fontSize: 20,
+      fontWeight: '500',
+      letterSpacing: -0.4,
     },
     iconBtn: {
       width: 32,
@@ -59,10 +59,10 @@ const styles = StyleSheet.create({
       width: 6,
       height: 6,
       borderRadius: 3,
-      backgroundColor: colors.surface2,
+      backgroundColor: colors.textTertiary,
     },
     dotActive: {
-      backgroundColor: colors.textTertiary,
+      backgroundColor: colors.text,
     },
 });
 
