@@ -1,11 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DarkSkyRadar, type RadarViewFrame } from '@/components/DarkSkyRadar';
 import { RadarTimeline } from '@/components/RadarTimeline';
-import { colors, pressed } from '@/constants/theme';
+import { colors, fonts, pressed } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { formatRadarTime } from '@/lib/format';
 import { fetchRadarFrames, radarTileUrl } from '@/lib/weather';
@@ -28,20 +28,15 @@ const styles = StyleSheet.create({
     },
     title: {
       color: colors.text,
-      fontSize: 28,
-      fontWeight: '600',
-      letterSpacing: -0.6,
-      textShadowColor: 'rgba(0,0,0,0.35)',
-      textShadowRadius: 10,
+      fontFamily: fonts.display,
+      fontSize: 22,
     },
     place: {
       color: colors.textSecondary,
+      fontFamily: fonts.body,
       marginTop: 2,
-      fontSize: 16,
-      lineHeight: 22,
-      letterSpacing: -0.15,
-      textShadowColor: 'rgba(0,0,0,0.35)',
-      textShadowRadius: 8,
+      fontSize: 15,
+      lineHeight: 20,
     },
     center: {
       ...StyleSheet.absoluteFillObject,
@@ -59,15 +54,19 @@ const styles = StyleSheet.create({
       alignItems: 'center',
       gap: 6,
       marginTop: 14,
-      backgroundColor: colors.overlay,
-      paddingHorizontal: 8,
+      backgroundColor: 'rgba(10, 14, 24, 0.6)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255,255,255,0.12)',
+      paddingHorizontal: 10,
       paddingVertical: 12,
-      borderRadius: 20,
+      borderRadius: 16,
     },
     legendLabel: {
-      color: colors.text,
-      fontSize: 11,
-      fontWeight: '600',
+      color: colors.textSecondary,
+      fontFamily: fonts.mono,
+      fontSize: 10,
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
     },
     swatches: {
       alignItems: 'center',
@@ -79,9 +78,10 @@ const styles = StyleSheet.create({
       borderRadius: 2,
     },
     controls: {
-      margin: 16,
-      marginBottom: 12,
-      backgroundColor: 'rgba(44,44,46,0.92)',
+      marginHorizontal: 16,
+      backgroundColor: 'rgba(10, 14, 24, 0.72)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255,255,255,0.12)',
       borderRadius: 18,
       padding: 14,
       flexDirection: 'row',
@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
       width: 36,
       height: 36,
       borderRadius: 18,
-      backgroundColor: '#F5F5F7',
+      backgroundColor: 'rgba(255,255,255,0.16)',
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -101,14 +101,14 @@ const styles = StyleSheet.create({
       alignItems: 'flex-end',
     },
     stamp: {
-      color: '#FFFFFF',
+      color: colors.text,
+      fontFamily: fonts.monoMedium,
       textAlign: 'right',
-      fontWeight: '600',
     },
     stampRelative: {
-      color: 'rgba(255,255,255,0.64)',
+      color: colors.textTertiary,
+      fontFamily: fonts.mono,
       fontSize: 11,
-      fontWeight: '500',
       marginTop: 1,
       textAlign: 'right',
     },
@@ -116,6 +116,7 @@ const styles = StyleSheet.create({
 
 export default function RadarScreen() {
   const { coords, placeName } = useApp();
+  const insets = useSafeAreaInsets();
   const [frames, setFrames] = useState<RadarViewFrame[]>([]);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
@@ -161,7 +162,7 @@ export default function RadarScreen() {
         scrollEnabled
         intervalMs={450}
       />
-      <SafeAreaView style={styles.overlay}>
+      <SafeAreaView style={styles.overlay} edges={['top']}>
         <View style={styles.top}>
           <Text style={styles.title}>Radar</Text>
           <Text style={styles.place}>{placeName}</Text>
@@ -185,11 +186,11 @@ export default function RadarScreen() {
             <Text style={styles.error}>{error}</Text>
           </View>
         ) : null}
-        <View style={styles.controls}>
+        <View style={[styles.controls, { marginBottom: Math.max(insets.bottom, 8) + 76 }]}>
           <Pressable
             onPress={() => setPlaying((value) => !value)}
             style={({ pressed: isPressed }) => [styles.play, isPressed && pressed]}>
-            <Ionicons name={playing ? 'pause' : 'play'} size={18} color="#1C1C1E" />
+            <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.text} />
           </Pressable>
           <RadarTimeline frames={frames} index={index} onSeek={seekTo} />
           <View style={styles.stampWrap}>

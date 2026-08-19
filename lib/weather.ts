@@ -1,6 +1,7 @@
 import { zonedIsoToMs } from './time';
 import type { CurrentWeather, DayPoint, HourPoint, WeatherAlert, WeatherBundle } from './types';
-import { daySummary, interpolateMinutely, nowcastSummary } from './nowcast';
+import { daySummary, interpolateMinutely, isPrecipComing as precipIsComing, nowcastSummary } from './nowcast';
+import { isPrecipCode } from './wmo';
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
@@ -33,13 +34,19 @@ function n(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+/** Prefer the combined precipitation field; fall back to rain+showers+snow when it is missing. */
+function amountMm(precipitation: unknown, rain: unknown, showers: unknown, snow: unknown): number {
+  return Math.max(n(precipitation), n(rain) + n(showers) + n(snow));
+}
+
 export async function fetchForecast(latitude: number, longitude: number): Promise<WeatherBundle> {
   const params = new URLSearchParams({
     latitude: String(latitude),
     longitude: String(longitude),
     timezone: 'auto',
+    precipitation_unit: 'mm',
     forecast_days: '8',
-    forecast_minutely_15: '8',
+    forecast_minutely_15: '24',
     past_minutely_15: '1',
     current: [
       'temperature_2m',
@@ -110,7 +117,7 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
     apparentTemperature: n(data.current.apparent_temperature),
     humidity: n(data.current.relative_humidity_2m),
     isDay: n(data.current.is_day) === 1,
-    precipitation: n(data.current.precipitation),
+    precipitation: amountMm(data.current.precipitation, data.current.rain, data.current.showers, data.current.snowfall),
     weatherCode: n(data.current.weather_code),
     cloudCover: n(data.current.cloud_cover),
     pressure: n(data.current.pressure_msl),
@@ -135,7 +142,12 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
       temperature: n(arr<number>(data.hourly.temperature_2m)[i]),
       apparentTemperature: n(arr<number>(data.hourly.apparent_temperature)[i]),
       precipitationProbability: n(arr<number>(data.hourly.precipitation_probability)[i]),
-      precipitation: n(arr<number>(data.hourly.precipitation)[i]),
+      precipitation: amountMm(
+        arr<number>(data.hourly.precipitation)[i],
+        arr<number>(data.hourly.rain)[i],
+        arr<number>(data.hourly.showers)[i],
+        arr<number>(data.hourly.snowfall)[i],
+      ),
       weatherCode: n(arr<number>(data.hourly.weather_code)[i]),
       cloudCover: n(arr<number>(data.hourly.cloud_cover)[i]),
       visibility: n(arr<number>(data.hourly.visibility)[i], 10000),
@@ -170,9 +182,18 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
     snowfallSum: n(arr<number>(data.daily.snowfall_sum)[i]),
   }));
 
+  const minuteTimes = arr<string>(data.minutely_15?.time);
+  const minutePrecip = minuteTimes.map((_, i) =>
+    amountMm(
+      arr<number | null>(data.minutely_15?.precipitation)[i],
+      arr<number | null>(data.minutely_15?.rain)[i],
+      0,
+      arr<number | null>(data.minutely_15?.snowfall)[i],
+    ),
+  );
   const minutely = interpolateMinutely(
-    arr<string>(data.minutely_15?.time),
-    arr<number | null>(data.minutely_15?.precipitation),
+    minuteTimes,
+    minutePrecip,
     arr<number | null>(data.minutely_15?.precipitation_probability),
     arr<number | null>(data.minutely_15?.weather_code),
     arr<number | null>(data.minutely_15?.snowfall),
@@ -182,10 +203,15 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
   if (minutely.length === 0 && hourly.length > 0) {
     const first = hourly[0];
     const second = hourly[1] ?? hourly[0];
+    const to15 = (hour: HourPoint) => {
+      if (hour.precipitation > 0) return hour.precipitation / 4;
+      if (isPrecipCode(hour.weatherCode) || hour.precipitationProbability >= 40) return 0.12;
+      return 0;
+    };
     minutely.push(
       ...interpolateMinutely(
         [first.time, second.time],
-        [first.precipitation / 4, second.precipitation / 4],
+        [to15(first), to15(second)],
         [first.precipitationProbability, second.precipitationProbability],
         [first.weatherCode, second.weatherCode],
         [0, 0],
@@ -208,14 +234,62 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
   };
 }
 
+const INACTIVE_ALERT = /\b(test|exercise|cancelled|canceled|expired)\b/i;
+const STORM_NAME = /\b(thunderstorms?|tornadoes?|flash\s*floods?|floods?|hurricanes?|blizzards?)\b/i;
+const HAZARD_SIGNAL = /\b(warning|watch|emergency|severe)\b/i;
+const NON_STORM_PRODUCT =
+  /\b(air quality|special weather statement|beach|freeze|frost|wind chill)\b/i;
+
+function isActiveAlert(ends?: string): boolean {
+  if (!ends) return true;
+  const end = Date.parse(ends);
+  return Number.isNaN(end) || end > Date.now();
+}
+
+function alertText(alert: WeatherAlert): string {
+  return `${alert.event} ${alert.headline}`.trim();
+}
+
+export function isStormAlert(alert: WeatherAlert): boolean {
+  const text = alertText(alert);
+  if (!text) return false;
+  if (!isActiveAlert(alert.ends)) return false;
+  if (INACTIVE_ALERT.test(text)) return false;
+
+  const namedStorm = STORM_NAME.test(text);
+  if (NON_STORM_PRODUCT.test(text) && !namedStorm) return false;
+
+  // Flood / thunderstorm advisories match STORM_NAME. Ignore AQI / freeze / etc.
+  return (
+    namedStorm ||
+    HAZARD_SIGNAL.test(text) ||
+    alert.severity === 'Severe' ||
+    alert.severity === 'Extreme'
+  );
+}
+
+export function isSevereWeatherComing(alerts: WeatherAlert[]): boolean {
+  return alerts.some(isStormAlert);
+}
+
+/** True when the hourly card shows the rain/nowcast intensity chart. Alerts are not required. */
+export function isPrecipComing(weather: WeatherBundle): boolean {
+  return precipIsComing(weather.minutely, weather.hourly);
+}
+
+/** Pin the radar map above the hourly card whenever that precip chart is visible. */
+export function shouldPromoteRadarMap(weather: WeatherBundle): boolean {
+  return isPrecipComing(weather);
+}
+
 export async function fetchAlerts(latitude: number, longitude: number): Promise<WeatherAlert[]> {
   try {
     const response = await fetch(
       `${NWS_ALERTS}?point=${latitude.toFixed(4)},${longitude.toFixed(4)}`,
       {
         headers: {
-          Accept: 'application/geo+json',
-          'User-Agent': 'GreySkyWeather/1.0 (local-expo-app)',
+          Accept: 'application/geo+json, application/json',
+          'User-Agent': 'GreySkyWeather/1.1 (com.brannonglover.greysky; expo-app)',
         },
       },
     );
@@ -228,29 +302,45 @@ export async function fetchAlerts(latitude: number, longitude: number): Promise<
           headline?: string;
           description?: string;
           severity?: string;
+          status?: string;
+          messageType?: string;
           onset?: string;
           ends?: string;
         };
       }[];
     };
-    return (json.features ?? []).slice(0, 6).map((feature) => {
-      const severity = feature.properties.severity;
-      return {
-        id: feature.id,
-        event: feature.properties.event ?? 'Weather alert',
-        headline: feature.properties.headline ?? feature.properties.event ?? 'Alert',
-        description: feature.properties.description ?? '',
-        severity:
-          severity === 'Minor' ||
-          severity === 'Moderate' ||
-          severity === 'Severe' ||
-          severity === 'Extreme'
-            ? severity
-            : 'Unknown',
-        onset: feature.properties.onset,
-        ends: feature.properties.ends,
-      };
-    });
+    return (json.features ?? [])
+      .filter((feature) => {
+        const props = feature.properties;
+        const event = props.event?.trim();
+        const headline = props.headline?.trim();
+        if (!event && !headline) return false;
+        if (props.status && props.status !== 'Actual') return false;
+        if (props.messageType === 'Cancel') return false;
+        return isActiveAlert(props.ends);
+      })
+      .slice(0, 6)
+      .map((feature) => {
+        const severity = feature.properties.severity;
+        return {
+          id: feature.id,
+          event: feature.properties.event?.trim() || 'Weather alert',
+          headline:
+            feature.properties.headline?.trim() ||
+            feature.properties.event?.trim() ||
+            'Alert',
+          description: feature.properties.description ?? '',
+          severity:
+            severity === 'Minor' ||
+            severity === 'Moderate' ||
+            severity === 'Severe' ||
+            severity === 'Extreme'
+              ? severity
+              : 'Unknown',
+          onset: feature.properties.onset,
+          ends: feature.properties.ends,
+        };
+      });
   } catch {
     return [];
   }

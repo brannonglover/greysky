@@ -17,6 +17,12 @@ export function formatHour(iso: string): string {
   return formatHourNumber(wallHour(iso));
 }
 
+export function formatHourCompact(iso: string): string {
+  const hours = wallHour(iso);
+  if (!Number.isFinite(hours)) return formatHour(iso);
+  return `${hour12(hours)}${hours < 12 ? 'A' : 'P'}`;
+}
+
 export function formatWeekday(iso: string, index: number): string {
   if (index === 0) return 'Today';
   const datePart = iso.split('T')[0];
@@ -25,10 +31,10 @@ export function formatWeekday(iso: string, index: number): string {
 }
 
 export function formatWeekdayShort(iso: string, index: number): string {
-  if (index === 0) return 'TODAY';
+  if (index === 0) return 'Today';
   const datePart = iso.split('T')[0];
   const [year, month, day] = datePart.split('-').map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', { weekday: 'short' });
 }
 
 export function formatSunsetIn(sunsetIso: string, timeZone?: string): string {

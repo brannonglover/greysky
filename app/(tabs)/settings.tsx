@@ -1,12 +1,12 @@
 import * as Haptics from 'expo-haptics';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, hairline, pressed, radii, spacing } from '@/constants/theme';
+import { colors, fonts, hairline, pressed, radii, spacing, typeStyles } from '@/constants/theme';
 import { SkyBackdrop } from '@/components/SkyBackdrop';
 import { useApp } from '@/context/AppContext';
-import { ensureNotificationSetup } from '@/lib/notifications';
+import { alertsEnabled, ensureNotificationSetup } from '@/lib/notifications';
 import type { AlertPrefs } from '@/lib/types';
 
 const ALERTS: { key: keyof AlertPrefs; title: string; body: string }[] = [
@@ -40,6 +40,12 @@ const ALERTS: { key: keyof AlertPrefs; title: string; body: string }[] = [
 export default function SettingsScreen() {
   const { settings, updateSettings } = useApp();
 
+  useEffect(() => {
+    if (alertsEnabled(settings.alerts)) {
+      void ensureNotificationSetup();
+    }
+  }, [settings.alerts]);
+
   async function toggle(key: keyof AlertPrefs, value: boolean) {
     void Haptics.selectionAsync();
     if (value) await ensureNotificationSetup();
@@ -58,7 +64,7 @@ export default function SettingsScreen() {
           Next-hour rain, severe weather, and morning reminders — scheduled from the hyperlocal forecast.
         </Text>
 
-        <Text style={styles.section}>Notifications</Text>
+        <Text style={styles.section}>Alerts</Text>
         <View style={styles.card}>
           {ALERTS.map((item, index) => (
             <View key={item.key} style={[styles.row, index < ALERTS.length - 1 && styles.border]}>
@@ -70,7 +76,7 @@ export default function SettingsScreen() {
                 value={settings.alerts[item.key]}
                 onValueChange={(value) => toggle(item.key, value)}
                 trackColor={{ false: colors.surface2, true: colors.precip }}
-                thumbColor={colors.onAccent}
+                thumbColor={colors.text}
               />
             </View>
           ))}
@@ -117,24 +123,20 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
+    fontFamily: fonts.display,
     fontSize: 32,
-    fontWeight: '600',
     letterSpacing: -0.7,
   },
   lede: {
     color: colors.textSecondary,
+    fontFamily: fonts.body,
     fontSize: 16,
     lineHeight: 22,
-    letterSpacing: -0.15,
     marginTop: 8,
     marginBottom: 12,
   },
   section: {
-    color: colors.textTertiary,
-    fontSize: 13,
-    fontWeight: '600',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
+    ...typeStyles.panelLabel,
     marginTop: 24,
     marginBottom: 10,
   },
@@ -161,12 +163,12 @@ const styles = StyleSheet.create({
   },
   rowTitle: {
     color: colors.text,
+    fontFamily: fonts.bodySemi,
     fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: -0.2,
   },
   rowBody: {
     color: colors.textSecondary,
+    fontFamily: fonts.body,
     fontSize: 13,
     lineHeight: 18,
     marginTop: 4,
@@ -192,14 +194,15 @@ const styles = StyleSheet.create({
   },
   segText: {
     color: colors.textSecondary,
-    fontWeight: '600',
+    fontFamily: fonts.bodySemi,
   },
   segTextActive: {
     color: colors.onAccent,
   },
   hint: {
     color: colors.textTertiary,
-    fontSize: 13,
+    fontFamily: fonts.mono,
+    fontSize: 12,
     marginTop: 10,
   },
 });

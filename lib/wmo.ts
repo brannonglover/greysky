@@ -61,3 +61,12 @@ export function isPrecipCode(code: number): boolean {
     code >= 95
   );
 }
+
+export function isThunderstormCode(code: number): boolean {
+  return code >= 95;
+}
+
+/** Rain / freezing rain / showers / thunderstorms. Drizzle (51–57) is excluded. */
+export function isRainOrStormCode(code: number): boolean {
+  return (code >= 61 && code <= 67) || (code >= 80 && code <= 82) || code >= 95;
+}

@@ -1,11 +1,21 @@
-/** Map 15-minute precipitation (mm) onto Dark Sky's 0–1 intensity scale. */
-export function intensityFromMm(mm15: number): number {
-  const mmHr = Math.max(0, mm15) * 4;
-  if (mmHr <= 0.02) return 0;
-  if (mmHr < 0.4) return (mmHr / 0.4) * 0.33;
-  if (mmHr < 2.5) return 0.33 + ((mmHr - 0.4) / 2.1) * 0.33;
-  if (mmHr < 7.6) return 0.66 + ((mmHr - 2.5) / 5.1) * 0.34;
+/** Map precipitation rate (mm/hr) onto Dark Sky's 0–1 intensity scale. */
+export function intensityFromMmHr(mmHr: number): number {
+  const rate = Math.max(0, mmHr);
+  if (rate <= 0.02) return 0;
+  if (rate < 0.4) return (rate / 0.4) * 0.33;
+  if (rate < 2.5) return 0.33 + ((rate - 0.4) / 2.1) * 0.33;
+  if (rate < 7.6) return 0.66 + ((rate - 2.5) / 5.1) * 0.34;
   return 1;
+}
+
+/** 15-minute totals from the nowcast. */
+export function intensityFromMm(mm15: number): number {
+  return intensityFromMmHr(Math.max(0, mm15) * 4);
+}
+
+/** Hourly precipitation is already a mm/hr average for that hour. */
+export function intensityFromHourlyMm(mm: number): number {
+  return intensityFromMmHr(mm);
 }
 
 export function barColorForCode(code: number): string {

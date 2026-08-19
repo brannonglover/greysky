@@ -1,12 +1,14 @@
+import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { DarkSkyRadar, type RadarViewFrame } from '@/components/DarkSkyRadar';
-import { colors } from '@/constants/theme';
+import { colors, glass, pressed } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { fetchRadarFrames, radarTileUrl } from '@/lib/weather';
 
 export function ForecastMap() {
+  const router = useRouter();
   const { coords } = useApp();
   const [frames, setFrames] = useState<RadarViewFrame[]>([]);
 
@@ -30,23 +32,30 @@ export function ForecastMap() {
   if (!coords) return null;
 
   return (
-    <View style={styles.map}>
-      <DarkSkyRadar
-        latitude={coords.latitude}
-        longitude={coords.longitude}
-        zoom={6}
-        frames={frames}
-        playing={false}
-        scrollEnabled={false}
-      />
-    </View>
+    <Pressable
+      onPress={() => router.push('/(tabs)/radar')}
+      style={({ pressed: isPressed }) => [styles.card, isPressed && pressed]}>
+      <View style={styles.map} pointerEvents="none">
+        <DarkSkyRadar
+          latitude={coords.latitude}
+          longitude={coords.longitude}
+          zoom={7}
+          frames={frames}
+          playing={false}
+          scrollEnabled={false}
+        />
+      </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  card: {
+    ...glass.card,
+    marginTop: 12,
+  },
   map: {
-    height: 220,
-    marginBottom: 8,
+    height: 108,
     overflow: 'hidden',
     backgroundColor: colors.mapBg,
   },

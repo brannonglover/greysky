@@ -38,9 +38,13 @@ module.exports = {
     },
     ios: {
       supportsTablet: true,
+      config: {
+        usesNonExemptEncryption: false,
+      },
       infoPlist: {
         NSLocationWhenInUseUsageDescription:
           'Grey Sky uses your location to show hyperlocal minute-by-minute weather at your exact spot.',
+        UIBackgroundModes: ['processing'],
       },
       bundleIdentifier: 'com.brannonglover.greysky',
       buildNumber,
@@ -77,6 +81,7 @@ module.exports = {
         },
       ],
       'expo-notifications',
+      'expo-background-task',
     ],
     experiments: {
       typedRoutes: true,

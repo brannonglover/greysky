@@ -3,12 +3,14 @@ import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
 import Svg, { Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { colors } from '@/constants/theme';
+import { nowcastHasPrecip } from '@/lib/nowcast';
 import { intensityFromMm } from '@/lib/precip';
 import type { MinutePoint } from '@/lib/types';
 
 type Props = {
   minutes: MinutePoint[];
   summary: string;
+  embedded?: boolean;
 };
 
 const PAD_LEFT = 52;
@@ -44,6 +46,10 @@ const styles = StyleSheet.create({
       marginTop: 8,
       marginBottom: 0,
     },
+    embedded: {
+      marginTop: 4,
+      marginBottom: 4,
+    },
     summary: {
       color: colors.text,
       fontSize: 17,
@@ -61,9 +67,10 @@ const styles = StyleSheet.create({
     },
 });
 
-export function PrecipitationChart({ minutes, summary }: Props) {
+export function PrecipitationChart({ minutes, summary, embedded }: Props) {
   const [width, setWidth] = useState(0);
-  const caption = summary.trim() || 'Clear for the hour.';
+  const show = nowcastHasPrecip(minutes);
+  const caption = summary.trim() || 'Rain expected this hour.';
   const hasPrecip = minutes.some((p) => intensityFromMm(p.precipitationMm) > 0.04);
   const baselineY = PAD_TOP + PLOT_HEIGHT;
   const innerW = Math.max(1, width - PAD_LEFT - PAD_RIGHT);
@@ -81,8 +88,12 @@ export function PrecipitationChart({ minutes, summary }: Props) {
     return smoothPath(pts, baselineY);
   }, [baselineY, innerW, minutes, span]);
 
+  if (!show) return null;
+
   return (
-    <View style={styles.wrap} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
+    <View
+      style={[styles.wrap, embedded ? styles.embedded : null]}
+      onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
       {width > 0 ? (
         <Svg width={width} height={HEIGHT}>
           {hasPrecip && paths.area ? (
@@ -154,7 +165,7 @@ export function PrecipitationChart({ minutes, summary }: Props) {
         <View style={{ height: HEIGHT }} />
       )}
       <Text style={styles.summary}>{caption}</Text>
-      <View style={styles.rule} />
+      {embedded ? null : <View style={styles.rule} />}
     </View>
   );
 }

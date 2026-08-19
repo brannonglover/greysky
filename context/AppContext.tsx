@@ -1,14 +1,16 @@
 import * as Location from 'expo-location';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
+import { syncBackgroundWeatherTask } from '@/lib/backgroundWeather';
 import { skyFromWeather, type SkyPalette } from '@/lib/sky';
 import type { SavedLocation, Settings, WeatherBundle } from '@/lib/types';
-import { syncWeatherNotifications } from '@/lib/notifications';
+import { alertsEnabled, ensureNotificationSetup, syncWeatherNotifications } from '@/lib/notifications';
 import {
   defaultSettings,
   loadSavedLocations,
   loadSelectedLocationId,
   loadSettings,
+  saveLastPlace,
   saveSavedLocations,
   saveSelectedLocationId,
   saveSettings,
@@ -104,8 +106,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       setSelectedId(persistId);
       await saveSelectedLocationId(persistId);
+      await saveLastPlace({ latitude, longitude, name });
       const currentSettings = settingsRef.current;
-      void syncWeatherNotifications(bundle, currentSettings.alerts, name, currentSettings.units);
+      void (async () => {
+        if (alertsEnabled(currentSettings.alerts)) {
+          await ensureNotificationSetup();
+        }
+        await syncWeatherNotifications(bundle, currentSettings.alerts, name, currentSettings.units);
+        await syncBackgroundWeatherTask(currentSettings.alerts);
+      })();
     },
     [],
   );
@@ -215,7 +224,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const next = typeof patch === 'function' ? patch(settings) : { ...settings, ...patch };
       setSettings(next);
       await saveSettings(next);
+      void syncBackgroundWeatherTask(next.alerts);
       if (weather) {
+        if (alertsEnabled(next.alerts)) {
+          await ensureNotificationSetup();
+        }
         void syncWeatherNotifications(weather, next.alerts, placeName, next.units);
       }
     },

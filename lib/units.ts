@@ -44,6 +44,10 @@ export function formatPrecip(mm: number, units: Units): string {
   return `${mm < 10 ? mm.toFixed(1) : Math.round(mm)} mm`;
 }
 
+export function hasPrecipAmount(mm: number): boolean {
+  return mm >= 0.2;
+}
+
 export function formatVisibility(meters: number, units: Units): string {
   if (!Number.isFinite(meters)) return '—';
   if (units === 'us') {

@@ -12,10 +12,7 @@ export default function TabLayout() {
   return (
     <NativeTabs
       tintColor={tabInk}
-      blurEffect="systemThinMaterial"
-      backgroundColor="rgba(8, 14, 20, 0.22)"
-      disableTransparentOnScrollEdge
-      minimizeBehavior="onScrollDown"
+      minimizeBehavior="never"
       labelVisibilityMode="labeled"
       labelStyle={{
         default: { color: 'rgba(255, 255, 255, 0.72)' },
@@ -42,8 +39,8 @@ export default function TabLayout() {
       <NativeTabs.Trigger name="settings">
         <Label>Notifications</Label>
         <Icon
-          sf={{ default: 'cloud', selected: 'cloud.fill' }}
-          androidSrc={<VectorIcon family={Ionicons} name="cloud-outline" />}
+          sf={{ default: 'bell', selected: 'bell.fill' }}
+          androidSrc={<VectorIcon family={Ionicons} name="notifications-outline" />}
         />
       </NativeTabs.Trigger>
     </NativeTabs>

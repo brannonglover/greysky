@@ -61,3 +61,57 @@ export async function saveSelectedLocationId(id: string | 'current'): Promise<vo
 export function unitsLabel(units: Units): string {
   return units === 'us' ? 'US' : 'Metric';
 }
+
+const LAST_PLACE_KEY = 'umbra.lastPlace';
+const NOTIFY_STATE_KEY = 'umbra.notifyState';
+
+export type LastPlace = {
+  latitude: number;
+  longitude: number;
+  name: string;
+};
+
+export type NotifyState = {
+  rainNotified: boolean;
+  severeIds: string[];
+};
+
+export async function loadLastPlace(): Promise<LastPlace | null> {
+  try {
+    const raw = await AsyncStorage.getItem(LAST_PLACE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LastPlace>;
+    if (
+      typeof parsed.latitude !== 'number' ||
+      typeof parsed.longitude !== 'number' ||
+      typeof parsed.name !== 'string'
+    ) {
+      return null;
+    }
+    return { latitude: parsed.latitude, longitude: parsed.longitude, name: parsed.name };
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLastPlace(place: LastPlace): Promise<void> {
+  await AsyncStorage.setItem(LAST_PLACE_KEY, JSON.stringify(place));
+}
+
+export async function loadNotifyState(): Promise<NotifyState> {
+  try {
+    const raw = await AsyncStorage.getItem(NOTIFY_STATE_KEY);
+    if (!raw) return { rainNotified: false, severeIds: [] };
+    const parsed = JSON.parse(raw) as Partial<NotifyState>;
+    return {
+      rainNotified: parsed.rainNotified === true,
+      severeIds: Array.isArray(parsed.severeIds) ? parsed.severeIds.filter((id) => typeof id === 'string') : [],
+    };
+  } catch {
+    return { rainNotified: false, severeIds: [] };
+  }
+}
+
+export async function saveNotifyState(state: NotifyState): Promise<void> {
+  await AsyncStorage.setItem(NOTIFY_STATE_KEY, JSON.stringify(state));
+}

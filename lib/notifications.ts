@@ -3,7 +3,9 @@ import { Platform } from 'react-native';
 
 import type { AlertPrefs, WeatherBundle } from './types';
 import { dailyPrecipLikely, rainStartsInMinutes } from './nowcast';
+import { loadNotifyState, saveNotifyState } from './storage';
 import { formatTemp } from './units';
+import { isSevereWeatherComing } from './weather';
 
 if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
@@ -25,12 +27,22 @@ const IDS = {
   daily: 'umbra-daily',
 };
 
-export async function ensureNotificationSetup(): Promise<boolean> {
+export function alertsEnabled(prefs: AlertPrefs): boolean {
+  return prefs.nextHourPrecip || prefs.severeWeather || prefs.umbrella || prefs.sunscreen || prefs.dailySummary;
+}
+
+export async function ensureNotificationSetup(options?: { prompt?: boolean }): Promise<boolean> {
   if (Platform.OS === 'web') return false;
   const existing = await Notifications.getPermissionsAsync();
   let granted = existing.granted || existing.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
-  if (!granted) {
-    const requested = await Notifications.requestPermissionsAsync();
+  if (!granted && options?.prompt !== false) {
+    const requested = await Notifications.requestPermissionsAsync({
+      ios: {
+        allowAlert: true,
+        allowBadge: true,
+        allowSound: true,
+      },
+    });
     granted = requested.granted || requested.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
   }
   if (granted && Platform.OS === 'android') {
@@ -44,13 +56,24 @@ export async function ensureNotificationSetup(): Promise<boolean> {
   return granted;
 }
 
-async function cancelKnown(): Promise<void> {
-  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-  await Promise.all(
-    scheduled
-      .filter((item) => Object.values(IDS).includes(item.identifier))
-      .map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier)),
-  );
+async function cancelId(id: string): Promise<void> {
+  try {
+    await Notifications.cancelScheduledNotificationAsync(id);
+  } catch {
+    // Already delivered or never scheduled.
+  }
+}
+
+function intervalTrigger(seconds: number): Notifications.NotificationTriggerInput {
+  const trigger: Notifications.NotificationTriggerInput = {
+    type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+    seconds: Math.max(1, Math.round(seconds)),
+    repeats: false,
+  };
+  if (Platform.OS === 'android') {
+    return { ...trigger, channelId: 'weather' };
+  }
+  return trigger;
 }
 
 function nextMorning(hour = 7): Date {
@@ -71,99 +94,114 @@ export async function syncWeatherNotifications(
   if (Platform.OS === 'web') return;
 
   try {
-  const allowed = await Notifications.getPermissionsAsync();
-  const granted =
-    allowed.granted || allowed.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
-  if (!granted) return;
+    const allowed = await Notifications.getPermissionsAsync();
+    const granted =
+      allowed.granted || allowed.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
+    if (!granted) return;
 
-  await cancelKnown();
+    const state = await loadNotifyState();
+    let rainNotified = state.rainNotified;
+    let severeIds = state.severeIds;
 
-  if (prefs.nextHourPrecip) {
-    const starts = rainStartsInMinutes(weather.minutely);
-    if (starts !== null && starts <= 55) {
-      const fireIn = Math.max(1, starts - 8);
+    if (prefs.nextHourPrecip) {
+      const starts = rainStartsInMinutes(weather.minutely);
+      const expecting = starts !== null && starts <= 55;
+      if (expecting && !rainNotified) {
+        const seconds = starts <= 12 ? 1 : Math.max(60, (starts - 8) * 60);
+        await Notifications.scheduleNotificationAsync({
+          identifier: IDS.rain,
+          content: {
+            title: placeName,
+            body: weather.nowcastSummary,
+            sound: true,
+          },
+          trigger: intervalTrigger(seconds),
+        });
+        rainNotified = true;
+      } else if (!expecting) {
+        await cancelId(IDS.rain);
+        rainNotified = false;
+      }
+    } else {
+      await cancelId(IDS.rain);
+      rainNotified = false;
+    }
+
+    if (prefs.severeWeather) {
+      const incoming = weather.alerts.filter((alert) => isSevereWeatherComing([alert]));
+      const fresh = incoming.filter((alert) => !severeIds.includes(alert.id));
+      if (fresh.length > 0) {
+        const top = fresh[0];
+        await Notifications.scheduleNotificationAsync({
+          identifier: IDS.severe,
+          content: {
+            title: top.event,
+            body: fresh.length > 1 ? `${top.headline} · +${fresh.length - 1} more` : top.headline,
+            sound: true,
+          },
+          trigger: intervalTrigger(1),
+        });
+      }
+      const activeIds = incoming.map((alert) => alert.id);
+      severeIds = [...new Set([...severeIds.filter((id) => activeIds.includes(id)), ...activeIds])];
+    } else {
+      await cancelId(IDS.severe);
+      severeIds = [];
+    }
+
+    await Promise.all([cancelId(IDS.umbrella), cancelId(IDS.sunscreen), cancelId(IDS.daily)]);
+
+    const today = weather.daily[0];
+    const morning = nextMorning(7);
+    const morningTrigger: Notifications.NotificationTriggerInput =
+      Platform.OS === 'android'
+        ? {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: morning,
+            channelId: 'weather',
+          }
+        : {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: morning,
+          };
+
+    if (prefs.umbrella && dailyPrecipLikely(today)) {
       await Notifications.scheduleNotificationAsync({
-        identifier: IDS.rain,
+        identifier: IDS.umbrella,
         content: {
-          title: placeName,
-          body: weather.nowcastSummary,
+          title: 'Umbrella reminder',
+          body: `Rain looks likely in ${placeName} today.`,
           sound: true,
         },
-        trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: fireIn * 60,
-          channelId: Platform.OS === 'android' ? 'weather' : undefined,
-        },
+        trigger: morningTrigger,
       });
     }
-  }
 
-  if (prefs.severeWeather && weather.alerts[0]) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: IDS.severe,
-      content: {
-        title: weather.alerts[0].event,
-        body: weather.alerts[0].headline,
-        sound: true,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: 2,
-        channelId: Platform.OS === 'android' ? 'weather' : undefined,
-      },
-    });
-  }
+    if (prefs.sunscreen && (today?.uvIndexMax ?? 0) >= 6) {
+      await Notifications.scheduleNotificationAsync({
+        identifier: IDS.sunscreen,
+        content: {
+          title: 'Sunscreen reminder',
+          body: `UV reaches ${Math.round(today.uvIndexMax)} today in ${placeName}.`,
+          sound: true,
+        },
+        trigger: morningTrigger,
+      });
+    }
 
-  const today = weather.daily[0];
-  const morning = nextMorning(7);
+    if (prefs.dailySummary && today) {
+      await Notifications.scheduleNotificationAsync({
+        identifier: IDS.daily,
+        content: {
+          title: `${placeName}: ${formatTemp(today.temperatureMax, units)} / ${formatTemp(today.temperatureMin, units)}`,
+          body: weather.daySummary,
+          sound: false,
+        },
+        trigger: morningTrigger,
+      });
+    }
 
-  if (prefs.umbrella && dailyPrecipLikely(today)) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: IDS.umbrella,
-      content: {
-        title: 'Umbrella reminder',
-        body: `Rain looks likely in ${placeName} today.`,
-        sound: true,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: morning,
-        channelId: Platform.OS === 'android' ? 'weather' : undefined,
-      },
-    });
-  }
-
-  if (prefs.sunscreen && (today?.uvIndexMax ?? 0) >= 6) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: IDS.sunscreen,
-      content: {
-        title: 'Sunscreen reminder',
-        body: `UV reaches ${Math.round(today.uvIndexMax)} today in ${placeName}.`,
-        sound: true,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: morning,
-        channelId: Platform.OS === 'android' ? 'weather' : undefined,
-      },
-    });
-  }
-
-  if (prefs.dailySummary && today) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: IDS.daily,
-      content: {
-        title: `${placeName}: ${formatTemp(today.temperatureMax, units)} / ${formatTemp(today.temperatureMin, units)}`,
-        body: weather.daySummary,
-        sound: false,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: morning,
-        channelId: Platform.OS === 'android' ? 'weather' : undefined,
-      },
-    });
-  }
+    await saveNotifyState({ rainNotified, severeIds });
   } catch {
     // Local notifications are best-effort; forecast should still render.
   }

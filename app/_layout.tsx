@@ -1,4 +1,9 @@
+import '@/lib/backgroundWeather';
+import { IBMPlexMono_400Regular, IBMPlexMono_500Medium } from '@expo-google-fonts/ibm-plex-mono';
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
+import { SpaceGrotesk_500Medium, SpaceGrotesk_600SemiBold } from '@expo-google-fonts/space-grotesk';
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
+import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -6,7 +11,7 @@ import { useEffect } from 'react';
 import { Appearance, StyleSheet, View } from 'react-native';
 import 'react-native-reanimated';
 
-import { colors } from '@/constants/theme';
+import { colors, fonts } from '@/constants/theme';
 import { AppProvider } from '@/context/AppContext';
 
 export { ErrorBoundary } from 'expo-router';
@@ -31,10 +36,24 @@ const navigationTheme = {
 };
 
 export default function RootLayout() {
+  const [fontsLoaded, fontError] = useFonts({
+    SpaceGrotesk_500Medium,
+    SpaceGrotesk_600SemiBold,
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    IBMPlexMono_400Regular,
+    IBMPlexMono_500Medium,
+  });
+
   useEffect(() => {
     Appearance.setColorScheme('dark');
-    SplashScreen.hideAsync();
-  }, []);
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, fontError]);
+
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <AppProvider>
@@ -55,7 +74,7 @@ export default function RootLayout() {
                 headerTitle: 'Locations',
                 headerTintColor: colors.text,
                 headerStyle: { backgroundColor: colors.bg },
-                headerTitleStyle: { fontWeight: '600' },
+                headerTitleStyle: { fontFamily: fonts.display },
                 headerShadowVisible: false,
               }}
             />

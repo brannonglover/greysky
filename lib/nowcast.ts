@@ -1,8 +1,17 @@
+import { intensityFromHourlyMm } from './precip';
 import { wallHour, zonedIsoToMs } from './time';
 import type { DayPoint, HourPoint, MinutePoint } from './types';
 import { isPrecipCode, isSnowCode, labelForCode } from './wmo';
 
-const WET_MM = 0.08;
+/** 15-min total that counts as wet (~0.2 mm/hr). Low enough for storm onset, not dry-day noise. */
+const WET_MM = 0.05;
+/** Show the nowcast / notify when rain is expected, not only after it is already heavy. */
+export const PRECIP_LIKELY_PCT = 40;
+/** Hourly card precip graph: same chance threshold as HourlyTimeline. */
+export const PRECIP_CHART_CHANCE = 30;
+/** Trace of measurable rain on the Dark Sky intensity scale (HourlyTimeline). */
+const PRECIP_CHART_INTENSITY = 0.04;
+const PRECIP_CHART_HOURS = 12;
 
 function num(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -76,6 +85,31 @@ export function interpolateMinutely(
   return minutes;
 }
 
+export function nowcastHasPrecip(minutes: MinutePoint[]): boolean {
+  return minutes.some((p) => p.precipitationMm >= WET_MM || p.probability >= PRECIP_LIKELY_PCT);
+}
+
+function hoursShowPrecipChart(hours: HourPoint[]): boolean {
+  return hours.slice(0, PRECIP_CHART_HOURS).some(
+    (hour) =>
+      intensityFromHourlyMm(hour.precipitation) > PRECIP_CHART_INTENSITY ||
+      hour.precipitationProbability >= PRECIP_CHART_CHANCE ||
+      isPrecipCode(hour.weatherCode),
+  );
+}
+
+/** Same signal as the hourly-card rain/nowcast graph. Clear days stay false. */
+export function isPrecipComing(minutes: MinutePoint[] | undefined, hours: HourPoint[]): boolean {
+  return (minutes != null && nowcastHasPrecip(minutes)) || hoursShowPrecipChart(hours);
+}
+
+function precipNoun(minutes: MinutePoint[], fallbackSnow: boolean): 'snow' | 'rain' {
+  const wet = minutes.filter((p) => p.precipitationMm >= WET_MM || p.probability >= PRECIP_LIKELY_PCT);
+  if (wet.length === 0) return fallbackSnow ? 'snow' : 'rain';
+  const snowy = wet.filter((p) => p.isSnow).length > wet.length / 2;
+  return snowy ? 'snow' : 'rain';
+}
+
 export function nowcastSummary(minutes: MinutePoint[], currentCode: number): string {
   if (minutes.length === 0) {
     return `${labelForCode(currentCode)} for the hour.`;
@@ -95,6 +129,12 @@ export function nowcastSummary(minutes: MinutePoint[], currentCode: number): str
 
   if (!currentlyWet && firstWet === -1) {
     if (isPrecipCode(currentCode)) return `${labelForCode(currentCode)} ending now.`;
+    const firstLikely = minutes.findIndex((p) => p.probability >= PRECIP_LIKELY_PCT);
+    if (firstLikely >= 0) {
+      const noun = precipNoun(minutes, minutes[firstLikely]?.isSnow ?? false);
+      const label = noun === 'snow' ? 'Snow' : 'Rain';
+      return firstLikely <= 5 ? `${label} possible this hour.` : `${label} possible in ${firstLikely} min.`;
+    }
     return `${labelForCode(currentCode)} for the hour.`;
   }
 
@@ -162,10 +202,11 @@ export function daySummary(hours: HourPoint[], day: DayPoint | undefined): strin
 }
 
 export function rainStartsInMinutes(minutes: MinutePoint[]): number | null {
-  const currentlyWet = (minutes[0]?.precipitationMm ?? 0) >= WET_MM;
-  if (currentlyWet) return null;
-  const idx = minutes.findIndex((p) => p.precipitationMm >= WET_MM);
-  return idx >= 0 ? idx : null;
+  if (minutes.length === 0) return null;
+  const alreadyRaining = (minutes[0]?.precipitationMm ?? 0) >= WET_MM;
+  if (alreadyRaining) return null;
+  const idx = minutes.findIndex((p) => p.precipitationMm >= WET_MM || p.probability >= PRECIP_LIKELY_PCT);
+  return idx >= 0 ? Math.max(1, idx) : null;
 }
 
 export function rainStopsInMinutes(minutes: MinutePoint[]): number | null {

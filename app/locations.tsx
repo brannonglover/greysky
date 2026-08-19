@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 
-import { colors, hairline, pressed, radii, spacing } from '@/constants/theme';
+import { colors, fonts, hairline, pressed, radii, spacing, typeStyles } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { searchPlaces } from '@/lib/weather';
 
@@ -49,15 +49,12 @@ const styles = StyleSheet.create({
     input: {
       flex: 1,
       color: colors.text,
+      fontFamily: fonts.body,
       fontSize: 16,
       paddingVertical: 12,
     },
     section: {
-      color: colors.textTertiary,
-      fontSize: 13,
-      fontWeight: '600',
-      letterSpacing: 0.6,
-      textTransform: 'uppercase',
+      ...typeStyles.panelLabel,
       marginBottom: 10,
     },
     card: {
@@ -83,12 +80,12 @@ const styles = StyleSheet.create({
     },
     name: {
       color: colors.text,
+      fontFamily: fonts.bodySemi,
       fontSize: 16,
-      fontWeight: '600',
-      letterSpacing: -0.2,
     },
     meta: {
       color: colors.textSecondary,
+      fontFamily: fonts.body,
       marginTop: 3,
       fontSize: 13,
     },

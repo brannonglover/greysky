@@ -17,8 +17,8 @@ export function SkyBackdrop({ children }: Props) {
       <LinearGradient
         colors={sky.gradient}
         locations={sky.locations}
-        start={{ x: 0.18, y: 0 }}
-        end={{ x: 0.82, y: 1 }}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
         pointerEvents="none"
         style={StyleSheet.absoluteFill}
       />
