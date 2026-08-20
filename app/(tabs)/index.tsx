@@ -209,7 +209,7 @@ export default function ForecastScreen() {
                 units={settings.units}
                 minutes={weather.minutely}
               />
-              <DailyForecast days={weather.daily} units={settings.units} />
+              <DailyForecast days={weather.daily} hours={weather.hourly} units={settings.units} />
               {urgent ? null : map}
             </View>
           </ScrollView>

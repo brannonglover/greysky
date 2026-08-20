@@ -37,6 +37,16 @@ export function formatWeekdayShort(iso: string, index: number): string {
   return new Date(year, month - 1, day).toLocaleDateString('en-US', { weekday: 'short' });
 }
 
+export function formatDayHeading(iso: string, index: number): { title: string; subtitle: string } {
+  const datePart = iso.split('T')[0];
+  const [year, month, day] = datePart.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return {
+    title: index === 0 ? 'Today' : date.toLocaleDateString('en-US', { weekday: 'long' }),
+    subtitle: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+  };
+}
+
 export function formatSunsetIn(sunsetIso: string, timeZone?: string): string {
   const ms = zonedIsoToMs(sunsetIso, timeZone) - Date.now();
   const clock = formatClock(sunsetIso);

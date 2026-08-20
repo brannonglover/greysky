@@ -1,16 +1,19 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { DayDetailSheet } from '@/components/DayDetailSheet';
 import { WeatherIcon } from '@/components/WeatherIcon';
-import { colors, fonts, glass, hairline, tempColorFromC, typeStyles, typography } from '@/constants/theme';
+import { colors, fonts, glass, hairline, pressed, tempColorFromC, typeStyles, typography } from '@/constants/theme';
 import { formatWeekdayShort } from '@/lib/format';
-import type { DayPoint, Units } from '@/lib/types';
+import type { DayPoint, HourPoint, Units } from '@/lib/types';
 import { formatTemp } from '@/lib/units';
 import { iconForCode } from '@/lib/wmo';
 
 type Props = {
   days: DayPoint[];
+  hours: HourPoint[];
   units: Units;
 };
 
@@ -78,20 +81,36 @@ const styles = StyleSheet.create({
   },
 });
 
-export function DailyForecast({ days, units }: Props) {
-  const min = Math.min(...days.map((day) => day.temperatureMin));
-  const max = Math.max(...days.map((day) => day.temperatureMax));
+export function DailyForecast({ days, hours, units }: Props) {
+  const week = days.slice(0, 7);
+  const min = Math.min(...week.map((day) => day.temperatureMin));
+  const max = Math.max(...week.map((day) => day.temperatureMax));
   const span = Math.max(1, max - min);
+  const [selected, setSelected] = useState<{ day: DayPoint; index: number } | null>(null);
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.label}>7-Day</Text>
-      {days.map((day, index) => {
+      {week.map((day, index) => {
         const leftPct = ((day.temperatureMin - min) / span) * 100;
         const widthPct = Math.max(4, ((day.temperatureMax - day.temperatureMin) / span) * 100);
+        const name = formatWeekdayShort(day.date, index);
         return (
-          <View key={day.date} style={[styles.row, index === days.length - 1 && styles.rowLast]}>
-            <Text style={styles.day}>{formatWeekdayShort(day.date, index)}</Text>
+          <Pressable
+            key={day.date}
+            onPress={() => {
+              void Haptics.selectionAsync();
+              setSelected({ day, index });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${name} forecast`}
+            accessibilityHint="Shows detailed weather for this day"
+            style={({ pressed: isPressed }) => [
+              styles.row,
+              index === week.length - 1 && styles.rowLast,
+              isPressed && pressed,
+            ]}>
+            <Text style={styles.day}>{name}</Text>
             <WeatherIcon name={iconForCode(day.weatherCode, true)} size={26} />
             <View style={styles.track}>
               <LinearGradient
@@ -107,9 +126,16 @@ export function DailyForecast({ days, units }: Props) {
             <Text style={styles.precip}>
               {day.precipitationProbabilityMax > 0 ? `${Math.round(day.precipitationProbabilityMax)}%` : ''}
             </Text>
-          </View>
+          </Pressable>
         );
       })}
+      <DayDetailSheet
+        day={selected?.day ?? null}
+        dayIndex={selected?.index ?? 0}
+        hours={hours}
+        units={units}
+        onClose={() => setSelected(null)}
+      />
     </View>
   );
 }

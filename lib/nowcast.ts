@@ -1,17 +1,13 @@
-import { intensityFromHourlyMm } from './precip';
 import { wallHour, zonedIsoToMs } from './time';
 import type { DayPoint, HourPoint, MinutePoint } from './types';
-import { isPrecipCode, isSnowCode, labelForCode } from './wmo';
+import { isHeavyRainOrStormCode, isPrecipCode, isSnowCode, labelForCode } from './wmo';
 
 /** 15-min total that counts as wet (~0.2 mm/hr). Low enough for storm onset, not dry-day noise. */
 const WET_MM = 0.05;
 /** Show the nowcast / notify when rain is expected, not only after it is already heavy. */
 export const PRECIP_LIKELY_PCT = 40;
-/** Hourly card precip graph: same chance threshold as HourlyTimeline. */
-export const PRECIP_CHART_CHANCE = 30;
-/** Trace of measurable rain on the Dark Sky intensity scale (HourlyTimeline). */
-const PRECIP_CHART_INTENSITY = 0.04;
-const PRECIP_CHART_HOURS = 12;
+/** Measurable hourly rain (mm), used with chance so trace leftover does not open the graph. */
+const HOUR_WET_MM = 0.2;
 
 function num(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -86,21 +82,51 @@ export function interpolateMinutely(
 }
 
 export function nowcastHasPrecip(minutes: MinutePoint[]): boolean {
-  return minutes.some((p) => p.precipitationMm >= WET_MM || p.probability >= PRECIP_LIKELY_PCT);
+  if (minutes.length === 0) return false;
+  if ((minutes[0]?.precipitationMm ?? 0) >= WET_MM) return true;
+  return minutes.some((p) => p.probability >= PRECIP_LIKELY_PCT);
 }
 
-function hoursShowPrecipChart(hours: HourPoint[]): boolean {
-  return hours.slice(0, PRECIP_CHART_HOURS).some(
-    (hour) =>
-      intensityFromHourlyMm(hour.precipitation) > PRECIP_CHART_INTENSITY ||
-      hour.precipitationProbability >= PRECIP_CHART_CHANCE ||
-      isPrecipCode(hour.weatherCode),
-  );
+function hourHasLikelyPrecip(hour: HourPoint): boolean {
+  return hour.precipitationProbability >= PRECIP_LIKELY_PCT || hour.precipitation >= HOUR_WET_MM;
 }
 
-/** Same signal as the hourly-card rain/nowcast graph. Clear days stay false. */
+/** Rain graph: likely rain in the next hour. Overnight leftover stays hidden. */
 export function isPrecipComing(minutes: MinutePoint[] | undefined, hours: HourPoint[]): boolean {
-  return (minutes != null && nowcastHasPrecip(minutes)) || hoursShowPrecipChart(hours);
+  if (minutes != null && minutes.length > 0) {
+    return nowcastHasPrecip(minutes);
+  }
+  return hours.slice(0, 2).some(hourHasLikelyPrecip);
+}
+
+/** Matches intensityWord "Heavy rain" / the HEAVY band on the precip chart. */
+const HEAVY_MM_HR = 7.5;
+const WITHIN_HOUR_MS = 60 * 60_000;
+
+function isHeavyRate(mmHr: number): boolean {
+  return mmHr >= HEAVY_MM_HR;
+}
+
+/** Thunderstorm or heavy rain in the next 60 minutes — not overnight drizzle. */
+export function isHeavyRainStormComing(
+  minutes: MinutePoint[] | undefined,
+  hours: HourPoint[],
+  currentCode?: number,
+  currentMmHr?: number,
+  timeZone?: string,
+): boolean {
+  if (currentCode != null && isHeavyRainOrStormCode(currentCode)) return true;
+  if (currentMmHr != null && isHeavyRate(currentMmHr)) return true;
+
+  if (minutes?.some((point) => isHeavyRate(point.precipitationMm * 4))) return true;
+
+  const now = Date.now();
+  const cutoff = now + WITHIN_HOUR_MS;
+  return hours.some((hour) => {
+    const start = zonedIsoToMs(hour.time, timeZone);
+    if (!Number.isFinite(start) || start > cutoff || start < now - WITHIN_HOUR_MS) return false;
+    return isHeavyRainOrStormCode(hour.weatherCode) || isHeavyRate(hour.precipitation);
+  });
 }
 
 function precipNoun(minutes: MinutePoint[], fallbackSnow: boolean): 'snow' | 'rain' {
@@ -161,10 +187,15 @@ export function nowcastSummary(minutes: MinutePoint[], currentCode: number): str
   return `${labelForCode(currentCode)} for the hour.`;
 }
 
+export function hoursOnDate(hours: HourPoint[], date: string): HourPoint[] {
+  const key = date.slice(0, 10);
+  return hours.filter((hour) => hour.time.slice(0, 10) === key);
+}
+
 export function daySummary(hours: HourPoint[], day: DayPoint | undefined): string {
   if (!day) return 'Forecast unavailable.';
 
-  const todayHours = hours.slice(0, 24);
+  const todayHours = hoursOnDate(hours, day.date);
   const precipHours = todayHours.filter((h) => h.precipitation >= 0.2 || h.precipitationProbability >= 45);
   const morning = precipHours.filter((h) => wallHour(h.time) < 12).length;
   const afternoon = precipHours.filter((h) => {

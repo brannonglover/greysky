@@ -70,3 +70,8 @@ export function isThunderstormCode(code: number): boolean {
 export function isRainOrStormCode(code: number): boolean {
   return (code >= 61 && code <= 67) || (code >= 80 && code <= 82) || code >= 95;
 }
+
+/** Heavy rain, heavy freezing rain, violent showers, thunderstorms. */
+export function isHeavyRainOrStormCode(code: number): boolean {
+  return code === 65 || code === 67 || code === 82 || code >= 95;
+}

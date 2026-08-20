@@ -1,6 +1,12 @@
 import { zonedIsoToMs } from './time';
 import type { CurrentWeather, DayPoint, HourPoint, WeatherAlert, WeatherBundle } from './types';
-import { daySummary, interpolateMinutely, isPrecipComing as precipIsComing, nowcastSummary } from './nowcast';
+import {
+  daySummary,
+  interpolateMinutely,
+  isHeavyRainStormComing as stormIsComing,
+  isPrecipComing as precipIsComing,
+  nowcastSummary,
+} from './nowcast';
 import { isPrecipCode } from './wmo';
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
@@ -135,7 +141,7 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
     hourlyTimes.findIndex((t) => zonedIsoToMs(t, timeZone) >= now),
   );
 
-  const hourly: HourPoint[] = hourlyTimes.slice(hourlyStart, hourlyStart + 48).map((time, offset) => {
+  const hourly: HourPoint[] = hourlyTimes.slice(hourlyStart).map((time, offset) => {
     const i = hourlyStart + offset;
     return {
       time,
@@ -272,14 +278,35 @@ export function isSevereWeatherComing(alerts: WeatherAlert[]): boolean {
   return alerts.some(isStormAlert);
 }
 
+const IMMINENT_ALERT = /\b(warning|emergency)\b/i;
+const WITHIN_HOUR_MS = 60 * 60_000;
+
+function alertOnsetWithinHour(alert: WeatherAlert): boolean {
+  if (!alert.onset) return true;
+  const start = Date.parse(alert.onset);
+  return Number.isNaN(start) || start <= Date.now() + WITHIN_HOUR_MS;
+}
+
+/** Warning / emergency for a storm that is in effect or starts within the hour. */
+export function isImminentStormAlert(alerts: WeatherAlert[]): boolean {
+  return alerts.some((alert) => isStormAlert(alert) && IMMINENT_ALERT.test(alertText(alert)) && alertOnsetWithinHour(alert));
+}
+
 /** True when the hourly card shows the rain/nowcast intensity chart. Alerts are not required. */
 export function isPrecipComing(weather: WeatherBundle): boolean {
   return precipIsComing(weather.minutely, weather.hourly);
 }
 
-/** Pin the radar map above the hourly card whenever that precip chart is visible. */
+/** Pin radar above the hourly card for a storm warning or heavy rain in the next hour. */
 export function shouldPromoteRadarMap(weather: WeatherBundle): boolean {
-  return isPrecipComing(weather);
+  if (isImminentStormAlert(weather.alerts)) return true;
+  return stormIsComing(
+    weather.minutely,
+    weather.hourly,
+    weather.current.weatherCode,
+    weather.current.precipitation,
+    weather.timezone,
+  );
 }
 
 export async function fetchAlerts(latitude: number, longitude: number): Promise<WeatherAlert[]> {

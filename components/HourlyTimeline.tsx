@@ -5,7 +5,7 @@ import Svg, { Line, Path } from 'react-native-svg';
 import { WeatherIcon } from '@/components/WeatherIcon';
 import { colors, fonts, glass, typeStyles, typography } from '@/constants/theme';
 import { formatHourCompact } from '@/lib/format';
-import { isPrecipComing, PRECIP_CHART_CHANCE } from '@/lib/nowcast';
+import { isPrecipComing, PRECIP_LIKELY_PCT, rainStartsInMinutes, rainStopsInMinutes } from '@/lib/nowcast';
 import { intensityFromHourlyMm } from '@/lib/precip';
 import type { HourPoint, MinutePoint, Units } from '@/lib/types';
 import { displayTemp, formatPrecip, hasPrecipAmount } from '@/lib/units';
@@ -139,10 +139,11 @@ export function HourlyTimeline({ hours, units, minutes }: Props) {
   const chartW = Math.max(COL_W, model.length * COL_W);
 
   const rainSpan = useMemo(() => {
+    if (!showPrecip) return null;
     let startIdx = -1;
     let endIdx = -1;
-    model.forEach((hour, i) => {
-      if (hour.chance >= PRECIP_CHART_CHANCE || hour.intensity > 0.08 || hour.raining) {
+    model.slice(0, 2).forEach((hour, i) => {
+      if (hour.chance >= PRECIP_LIKELY_PCT || hour.intensity > 0.08 || hour.raining) {
         if (startIdx === -1) startIdx = i;
         endIdx = i;
       }
@@ -151,12 +152,10 @@ export function HourlyTimeline({ hours, units, minutes }: Props) {
     return {
       startIdx,
       endIdx,
-      startLabel: model[startIdx].label,
-      endLabel: model[endIdx].label,
       startX: xAt(startIdx),
       endX: xAt(endIdx),
     };
-  }, [model]);
+  }, [model, showPrecip]);
 
   const precipPlot = useMemo(() => {
     if (model.length < 2) return null;
@@ -171,15 +170,17 @@ export function HourlyTimeline({ hours, units, minutes }: Props) {
   }, [model]);
 
   const rainLabel = useMemo(() => {
-    const slice = rainSpan ? model.slice(rainSpan.startIdx, rainSpan.endIdx + 1) : model;
-    const totalMm = slice.reduce((sum, hour) => sum + hour.amountMm, 0);
+    if (!showPrecip) return null;
+    const near = model.slice(0, 2);
+    const totalMm = near.reduce((sum, hour) => sum + hour.amountMm, 0);
     const amount = hasPrecipAmount(totalMm) ? formatPrecip(totalMm, units) : null;
-    if (rainSpan) {
-      const range = `RAIN ${rainSpan.startLabel} – ${rainSpan.endLabel}`;
-      return amount ? `${range} · ${amount}` : range;
-    }
-    return amount;
-  }, [model, rainSpan, units]);
+    const starts = minutes ? rainStartsInMinutes(minutes) : null;
+    const stops = minutes ? rainStopsInMinutes(minutes) : null;
+    let headline = 'RAIN THIS HOUR';
+    if (starts != null) headline = `RAIN IN ${starts} MIN`;
+    else if (stops != null && stops < 55) headline = `RAIN ${stops} MIN LEFT`;
+    return amount ? `${headline} · ${amount}` : headline;
+  }, [minutes, model, showPrecip, units]);
 
   return (
     <View style={styles.wrap}>
