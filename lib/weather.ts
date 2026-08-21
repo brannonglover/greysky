@@ -7,7 +7,6 @@ import {
   isPrecipComing as precipIsComing,
   nowcastSummary,
 } from './nowcast';
-import { isPrecipCode } from './wmo';
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
@@ -51,7 +50,7 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
     longitude: String(longitude),
     timezone: 'auto',
     precipitation_unit: 'mm',
-    forecast_days: '8',
+    forecast_days: '10',
     forecast_minutely_15: '24',
     past_minutely_15: '1',
     current: [
@@ -210,8 +209,8 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
     const first = hourly[0];
     const second = hourly[1] ?? hourly[0];
     const to15 = (hour: HourPoint) => {
-      if (hour.precipitation > 0) return hour.precipitation / 4;
-      if (isPrecipCode(hour.weatherCode) || hour.precipitationProbability >= 40) return 0.12;
+      if (hour.precipitation >= 0.2) return hour.precipitation / 4;
+      if (hour.precipitation > 0 && hour.precipitationProbability >= 40) return hour.precipitation / 4;
       return 0;
     };
     minutely.push(

@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WeatherIcon } from '@/components/WeatherIcon';
 import { colors, fonts, glass, pressed, radii, typeStyles, typography } from '@/constants/theme';
 import { formatClock, formatDayHeading, formatHourCompact } from '@/lib/format';
-import { daySummary, hoursOnDate } from '@/lib/nowcast';
+import { daySummary, hoursOnDate, iconForLikelyWeather, labelForLikelyWeather } from '@/lib/nowcast';
 import type { DayPoint, HourPoint, Units } from '@/lib/types';
 import {
   cardinalFromDegrees,
@@ -29,7 +29,6 @@ import {
   hasPrecipAmount,
   uvLabel,
 } from '@/lib/units';
-import { iconForCode, labelForCode } from '@/lib/wmo';
 
 type Props = {
   day: DayPoint | null;
@@ -168,9 +167,14 @@ export function DayDetailSheet({ day, dayIndex, hours, units, onClose }: Props) 
               showsVerticalScrollIndicator={false}
               bounces>
               <View style={styles.hero}>
-                <WeatherIcon name={iconForCode(day.weatherCode, true)} size={42} />
+                <WeatherIcon
+                  name={iconForLikelyWeather(day.weatherCode, true, day.precipitationProbabilityMax, day.precipitationSum)}
+                  size={42}
+                />
                 <View style={styles.heroCopy}>
-                  <Text style={styles.condition}>{labelForCode(day.weatherCode)}</Text>
+                  <Text style={styles.condition}>
+                    {labelForLikelyWeather(day.weatherCode, day.precipitationProbabilityMax, day.precipitationSum)}
+                  </Text>
                   <Text style={styles.hilo}>
                     {formatTemp(day.temperatureMax, units)} / {formatTemp(day.temperatureMin, units)}
                   </Text>
@@ -190,7 +194,16 @@ export function DayDetailSheet({ day, dayIndex, hours, units, onClose }: Props) 
                           <Text style={styles.hourTime}>
                             {dayIndex === 0 && index === 0 ? 'Now' : formatHourCompact(hour.time)}
                           </Text>
-                          <WeatherIcon name={iconForCode(hour.weatherCode, hour.isDay)} size={26} />
+                          <WeatherIcon
+                            name={iconForLikelyWeather(
+                              hour.weatherCode,
+                              hour.isDay,
+                              hour.precipitationProbability,
+                              hour.precipitation,
+                              hour.cloudCover,
+                            )}
+                            size={26}
+                          />
                           <Text style={styles.hourTemp}>{Math.round(displayTemp(hour.temperature, units))}°</Text>
                           <Text style={styles.hourPrecip}>
                             {hour.precipitationProbability > 0 ? `${Math.round(hour.precipitationProbability)}%` : ''}

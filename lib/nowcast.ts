@@ -1,6 +1,6 @@
 import { wallHour, zonedIsoToMs } from './time';
 import type { DayPoint, HourPoint, MinutePoint } from './types';
-import { isHeavyRainOrStormCode, isPrecipCode, isSnowCode, labelForCode } from './wmo';
+import { iconForCode, isHeavyRainOrStormCode, isPrecipCode, isSnowCode, labelForCode } from './wmo';
 
 /** 15-min total that counts as wet (~0.2 mm/hr). Low enough for storm onset, not dry-day noise. */
 const WET_MM = 0.05;
@@ -8,6 +8,46 @@ const WET_MM = 0.05;
 export const PRECIP_LIKELY_PCT = 40;
 /** Measurable hourly rain (mm), used with chance so trace leftover does not open the graph. */
 const HOUR_WET_MM = 0.2;
+
+export function precipIsLikely(chance: number, amountMm: number): boolean {
+  return chance >= PRECIP_LIKELY_PCT || amountMm >= HOUR_WET_MM;
+}
+
+function skyIconForClouds(cloudCover: number | undefined, isDay: boolean) {
+  const cover = cloudCover ?? 80;
+  if (cover >= 85) return iconForCode(3, isDay);
+  if (cover >= 40) return iconForCode(2, isDay);
+  return iconForCode(0, isDay);
+}
+
+/** Rain/snow icons only when rain is likely; otherwise show the sky. */
+export function iconForLikelyWeather(
+  code: number,
+  isDay: boolean,
+  chance: number,
+  amountMm: number,
+  cloudCover?: number,
+) {
+  if (isPrecipCode(code) && !precipIsLikely(chance, amountMm)) {
+    return skyIconForClouds(cloudCover, isDay);
+  }
+  return iconForCode(code, isDay);
+}
+
+export function labelForLikelyWeather(
+  code: number,
+  chance: number,
+  amountMm: number,
+  cloudCover?: number,
+): string {
+  if (isPrecipCode(code) && !precipIsLikely(chance, amountMm)) {
+    const cover = cloudCover ?? 80;
+    if (cover >= 85) return 'Overcast';
+    if (cover >= 40) return 'Partly cloudy';
+    return 'Clear';
+  }
+  return labelForCode(code);
+}
 
 function num(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -115,17 +155,32 @@ export function isHeavyRainStormComing(
   currentMmHr?: number,
   timeZone?: string,
 ): boolean {
-  if (currentCode != null && isHeavyRainOrStormCode(currentCode)) return true;
+  if (currentCode != null && isHeavyRainOrStormCode(currentCode)) {
+    const currentLikely =
+      (currentMmHr != null && currentMmHr >= HOUR_WET_MM) ||
+      (minutes?.[0]?.precipitationMm ?? 0) >= WET_MM ||
+      (minutes?.some((point) => point.probability >= PRECIP_LIKELY_PCT) ?? false);
+    if (currentLikely) return true;
+  }
   if (currentMmHr != null && isHeavyRate(currentMmHr)) return true;
 
-  if (minutes?.some((point) => isHeavyRate(point.precipitationMm * 4))) return true;
+  if (
+    minutes?.some(
+      (point) =>
+        isHeavyRate(point.precipitationMm * 4) &&
+        (point.probability >= PRECIP_LIKELY_PCT || point.precipitationMm >= WET_MM),
+    )
+  ) {
+    return true;
+  }
 
   const now = Date.now();
   const cutoff = now + WITHIN_HOUR_MS;
   return hours.some((hour) => {
     const start = zonedIsoToMs(hour.time, timeZone);
     if (!Number.isFinite(start) || start > cutoff || start < now - WITHIN_HOUR_MS) return false;
-    return isHeavyRainOrStormCode(hour.weatherCode) || isHeavyRate(hour.precipitation);
+    if (!isHeavyRainOrStormCode(hour.weatherCode) && !isHeavyRate(hour.precipitation)) return false;
+    return precipIsLikely(hour.precipitationProbability, hour.precipitation);
   });
 }
 

@@ -5,11 +5,10 @@ import Svg, { Line, Path } from 'react-native-svg';
 import { WeatherIcon } from '@/components/WeatherIcon';
 import { colors, fonts, glass, typeStyles, typography } from '@/constants/theme';
 import { formatHourCompact } from '@/lib/format';
-import { isPrecipComing, PRECIP_LIKELY_PCT, rainStartsInMinutes, rainStopsInMinutes } from '@/lib/nowcast';
+import { iconForLikelyWeather, isPrecipComing, precipIsLikely, rainStartsInMinutes, rainStopsInMinutes } from '@/lib/nowcast';
 import { intensityFromHourlyMm } from '@/lib/precip';
 import type { HourPoint, MinutePoint, Units } from '@/lib/types';
 import { displayTemp, formatPrecip, hasPrecipAmount } from '@/lib/units';
-import { iconForCode, isPrecipCode } from '@/lib/wmo';
 
 type Props = {
   hours: HourPoint[];
@@ -129,8 +128,14 @@ export function HourlyTimeline({ hours, units, minutes }: Props) {
         chance: hour.precipitationProbability,
         amountMm: hour.precipitation,
         intensity: intensityFromHourlyMm(hour.precipitation),
-        raining: isPrecipCode(hour.weatherCode),
-        icon: iconForCode(hour.weatherCode, hour.isDay),
+        raining: precipIsLikely(hour.precipitationProbability, hour.precipitation),
+        icon: iconForLikelyWeather(
+          hour.weatherCode,
+          hour.isDay,
+          hour.precipitationProbability,
+          hour.precipitation,
+          hour.cloudCover,
+        ),
       })),
     [hours, units],
   );
@@ -143,7 +148,7 @@ export function HourlyTimeline({ hours, units, minutes }: Props) {
     let startIdx = -1;
     let endIdx = -1;
     model.slice(0, 2).forEach((hour, i) => {
-      if (hour.chance >= PRECIP_LIKELY_PCT || hour.intensity > 0.08 || hour.raining) {
+      if (hour.raining) {
         if (startIdx === -1) startIdx = i;
         endIdx = i;
       }

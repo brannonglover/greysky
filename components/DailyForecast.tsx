@@ -7,9 +7,9 @@ import { DayDetailSheet } from '@/components/DayDetailSheet';
 import { WeatherIcon } from '@/components/WeatherIcon';
 import { colors, fonts, glass, hairline, pressed, tempColorFromC, typeStyles, typography } from '@/constants/theme';
 import { formatWeekdayShort } from '@/lib/format';
+import { iconForLikelyWeather } from '@/lib/nowcast';
 import type { DayPoint, HourPoint, Units } from '@/lib/types';
 import { formatTemp } from '@/lib/units';
-import { iconForCode } from '@/lib/wmo';
 
 type Props = {
   days: DayPoint[];
@@ -82,7 +82,7 @@ const styles = StyleSheet.create({
 });
 
 export function DailyForecast({ days, hours, units }: Props) {
-  const week = days.slice(0, 7);
+  const week = days.slice(0, 10);
   const min = Math.min(...week.map((day) => day.temperatureMin));
   const max = Math.max(...week.map((day) => day.temperatureMax));
   const span = Math.max(1, max - min);
@@ -90,7 +90,7 @@ export function DailyForecast({ days, hours, units }: Props) {
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>7-Day</Text>
+      <Text style={styles.label}>10-Day</Text>
       {week.map((day, index) => {
         const leftPct = ((day.temperatureMin - min) / span) * 100;
         const widthPct = Math.max(4, ((day.temperatureMax - day.temperatureMin) / span) * 100);
@@ -111,7 +111,15 @@ export function DailyForecast({ days, hours, units }: Props) {
               isPressed && pressed,
             ]}>
             <Text style={styles.day}>{name}</Text>
-            <WeatherIcon name={iconForCode(day.weatherCode, true)} size={26} />
+            <WeatherIcon
+              name={iconForLikelyWeather(
+                day.weatherCode,
+                true,
+                day.precipitationProbabilityMax,
+                day.precipitationSum,
+              )}
+              size={26}
+            />
             <View style={styles.track}>
               <LinearGradient
                 colors={[tempColorFromC(day.temperatureMin), tempColorFromC(day.temperatureMax)]}

@@ -1,4 +1,4 @@
-import { intensityFromMm } from '@/lib/precip';
+import { PRECIP_LIKELY_PCT } from '@/lib/nowcast';
 import { zonedIsoToMs } from '@/lib/time';
 import type { MinutePoint, WeatherBundle } from '@/lib/types';
 import { isSnowCode } from '@/lib/wmo';
@@ -137,13 +137,12 @@ function sunPhase(
 
 function rainLevel(code: number, precipitation: number, minutes: MinutePoint[]): RainLevel {
   if (isSnowCode(code)) return 0;
-  const soon = minutes.slice(0, 8).some((point) => intensityFromMm(point.precipitationMm) > 0.08);
-  const falling = precipitation > 0.05 || soon;
-  if (code >= 95) return 3;
-  if (code === 65 || code === 82) return 3;
-  if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82) || (falling && code >= 61)) return 2;
-  if ((code >= 51 && code <= 57) || falling) return 1;
-  return 0;
+  const fallingNow = precipitation >= 0.2 || (minutes[0]?.precipitationMm ?? 0) >= 0.05;
+  const likelySoon = minutes.some((point) => point.probability >= PRECIP_LIKELY_PCT);
+  if (!fallingNow && !likelySoon) return 0;
+  if (code >= 95 || code === 65 || code === 82) return 3;
+  if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82) || precipitation >= 2.5) return 2;
+  return 1;
 }
 
 export const idleSky: SkyPalette = {
