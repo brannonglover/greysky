@@ -1,6 +1,9 @@
 export type RadarHtmlFrame = {
   time: number;
-  urlTemplate: string;
+  /** XYZ template, used by forecast tiles from our service. */
+  urlTemplate?: string;
+  /** WMS layer, used by observed frames served straight from NOAA GeoServer. */
+  wms?: { url: string; params: Record<string, string> };
 };
 
 export type RadarHtmlConfig = {
@@ -45,7 +48,7 @@ const BOOTSTRAP = `
   });
 
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a> &middot; Radar: <a href="https://www.noaa.gov/">NOAA</a>',
     subdomains: 'abcd',
     maxZoom: 7
   }).addTo(map);
@@ -99,6 +102,20 @@ const BOOTSTRAP = `
     }, intervalMs);
   }
 
+  function buildLayer(frame) {
+    var base = { opacity: 0, maxZoom: 7, maxNativeZoom: 7, tileSize: 256, zIndex: 2 };
+    if (frame.wms && frame.wms.url) {
+      var options = { opacity: 0, maxZoom: 7, tileSize: 256, zIndex: 2, transparent: true, format: 'image/png' };
+      for (var key in frame.wms.params) {
+        if (Object.prototype.hasOwnProperty.call(frame.wms.params, key)) {
+          options[key] = frame.wms.params[key];
+        }
+      }
+      return L.tileLayer.wms(frame.wms.url, options);
+    }
+    return L.tileLayer(frame.urlTemplate, base);
+  }
+
   function setFrames(next, startIndex) {
     for (var i = 0; i < layers.length; i++) {
       map.removeLayer(layers[i]);
@@ -106,13 +123,7 @@ const BOOTSTRAP = `
     layers = [];
     frames = next || [];
     for (var j = 0; j < frames.length; j++) {
-      var layer = L.tileLayer(frames[j].urlTemplate, {
-        opacity: 0,
-        maxZoom: 7,
-        maxNativeZoom: 7,
-        tileSize: 256,
-        zIndex: 2
-      });
+      var layer = buildLayer(frames[j]);
       layer.addTo(map);
       layers.push(layer);
     }

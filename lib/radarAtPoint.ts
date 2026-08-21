@@ -1,75 +1,42 @@
-import UPNG from 'upng-js';
-
 import { intensityFromMmHr } from '@/lib/precip';
-import { DARK_SKY_RAIN } from '@/lib/radarPalette';
-import type { RainFrame } from '@/lib/weather';
+import { RADAR_API } from '@/lib/weather';
 
 export type RadarSample = {
   time: number;
   intensity: number;
+  kind: 'observed' | 'forecast';
 };
 
+type PointResponse = {
+  samples?: Array<{ time: number; kind: 'observed' | 'forecast'; dbz: number | null }>;
+};
+
+/** Marshall-Palmer Z-R relation, the same conversion the hourly chart assumes. */
 function dbzToMmHr(dbz: number): number {
   if (dbz < 10) return 0;
   const z = 10 ** (dbz / 10);
   return (z / 200) ** (1 / 1.6);
 }
 
-function rgbaToDbz(r: number, g: number, b: number, a: number): number {
-  if (a < 24) return 0;
-  let best = 0;
-  let bestDist = Number.POSITIVE_INFINITY;
-  for (const swatch of DARK_SKY_RAIN) {
-    if (swatch.a < 24) continue;
-    const dist =
-      (r - swatch.r) ** 2 + (g - swatch.g) ** 2 + (b - swatch.b) ** 2 + ((a - swatch.a) / 2) ** 2;
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = swatch.dbz;
-    }
-  }
-  return bestDist > 48_000 ? 0 : best;
-}
-
-function sampleCenterIntensity(rgba: Uint8Array, width: number, height: number): number {
-  const cx = Math.floor(width / 2);
-  const cy = Math.floor(height / 2);
-  let sum = 0;
-  let count = 0;
-  for (let dy = -2; dy <= 2; dy += 1) {
-    for (let dx = -2; dx <= 2; dx += 1) {
-      const x = Math.min(width - 1, Math.max(0, cx + dx));
-      const y = Math.min(height - 1, Math.max(0, cy + dy));
-      const i = (y * width + x) * 4;
-      const dbz = rgbaToDbz(rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]);
-      sum += intensityFromMmHr(dbzToMmHr(dbz));
-      count += 1;
-    }
-  }
-  return count ? sum / count : 0;
-}
-
-export function radarCoordTileUrl(frame: RainFrame, latitude: number, longitude: number, zoom = 7): string {
-  return `${frame.host}${frame.path}/256/${zoom}/${latitude.toFixed(4)}/${longitude.toFixed(4)}/8/1_1.png`;
-}
-
-async function sampleFrame(frame: RainFrame, latitude: number, longitude: number): Promise<RadarSample> {
-  const response = await fetch(radarCoordTileUrl(frame, latitude, longitude));
-  if (!response.ok) return { time: frame.time, intensity: 0 };
-  const buffer = await response.arrayBuffer();
-  const img = UPNG.decode(buffer);
-  const rgba = new Uint8Array(UPNG.toRGBA8(img)[0]);
-  return { time: frame.time, intensity: sampleCenterIntensity(rgba, img.width, img.height) };
-}
-
-/** Radar reflectivity at the pin, using the same Dark Sky tiles as the map. */
-export async function sampleRadarAtPoint(
-  latitude: number,
-  longitude: number,
-  frames: RainFrame[],
-): Promise<RadarSample[]> {
-  const samples = await Promise.all(frames.map((frame) => sampleFrame(frame, latitude, longitude).catch(() => ({ time: frame.time, intensity: 0 }))));
-  return samples.sort((a, b) => a.time - b.time);
+/**
+ * Reflectivity at the pin across the same window the radar map covers. The
+ * service reads observed values out of NOAA's WMS and forecast values straight
+ * from the HRRR grid, so this now extends an hour ahead as well as behind.
+ */
+export async function sampleRadarAtPoint(latitude: number, longitude: number): Promise<RadarSample[]> {
+  const response = await fetch(
+    `${RADAR_API}/api/radar/point?lat=${latitude.toFixed(4)}&lon=${longitude.toFixed(4)}`,
+  );
+  if (!response.ok) throw new Error('Radar point sampling unavailable');
+  const json = (await response.json()) as PointResponse;
+  if (!Array.isArray(json.samples)) return [];
+  return json.samples
+    .map((sample) => ({
+      time: sample.time,
+      kind: sample.kind,
+      intensity: sample.dbz == null ? 0 : intensityFromMmHr(dbzToMmHr(sample.dbz)),
+    }))
+    .sort((a, b) => a.time - b.time);
 }
 
 export function radarIntensityAt(samples: RadarSample[], targetSec: number): number | null {

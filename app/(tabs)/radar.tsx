@@ -1,16 +1,24 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DarkSkyRadar, type RadarViewFrame } from '@/components/DarkSkyRadar';
+import { DarkSkyRadar } from '@/components/DarkSkyRadar';
 import { RadarTimeline } from '@/components/RadarTimeline';
 import { colors, fonts, pressed } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { formatRadarTime } from '@/lib/format';
-import { fetchRadarFrames, radarNowIndex, radarTileUrl } from '@/lib/weather';
+import { useOnAppResume } from '@/lib/useOnAppResume';
+import { fetchRadarManifest, radarNowIndex, type RadarFrame, type RadarLegendStop } from '@/lib/weather';
 
-const LEGEND = ['#5CE1FF', '#2F80ED', '#F5D76E', '#FF7EB6', '#E040FB'] as const;
+const FALLBACK_LEGEND: RadarLegendStop[] = [
+  { dbz: 5, color: '#6c7fac' },
+  { dbz: 15, color: '#57bab9' },
+  { dbz: 25, color: '#0db213' },
+  { dbz: 35, color: '#6d8f05' },
+  { dbz: 45, color: '#ff9100' },
+  { dbz: 55, color: '#bb1313' },
+];
 
 const styles = StyleSheet.create({
     root: {
@@ -117,39 +125,54 @@ const styles = StyleSheet.create({
 export default function RadarScreen() {
   const { coords, placeName } = useApp();
   const insets = useSafeAreaInsets();
-  const [frames, setFrames] = useState<RadarViewFrame[]>([]);
+  const [frames, setFrames] = useState<RadarFrame[]>([]);
+  const [window, setWindow] = useState({ pastMin: 60, futureMin: 60 });
+  const [legend, setLegend] = useState<RadarLegendStop[]>(FALLBACK_LEGEND);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const framesRef = useRef<RadarViewFrame[]>([]);
+  const framesRef = useRef<RadarFrame[]>([]);
   const indexRef = useRef(0);
   framesRef.current = frames;
   indexRef.current = index;
 
+  const mounted = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      fetchRadarFrames()
-        .then((next) => {
-          if (cancelled) return;
-          const mapped = next.map((frame) => ({ time: frame.time, urlTemplate: radarTileUrl(frame) }));
-          const previousTime = framesRef.current[indexRef.current]?.time;
-          const keep = previousTime != null ? mapped.findIndex((frame) => frame.time === previousTime) : -1;
-          setFrames(mapped);
-          setIndex(keep >= 0 ? keep : radarNowIndex(mapped));
-          setError(null);
-        })
-        .catch(() => {
-          if (!cancelled && framesRef.current.length === 0) setError('Radar is unavailable right now.');
-        });
-    };
-    load();
-    const timer = setInterval(load, 75_000);
+    mounted.current = true;
     return () => {
-      cancelled = true;
-      clearInterval(timer);
+      mounted.current = false;
     };
   }, []);
+
+  const load = useCallback(() => {
+    fetchRadarManifest()
+      .then((manifest) => {
+        if (!mounted.current) return;
+        // Hold the user's position across refreshes when that frame survives.
+        // After a long background it will not, and we snap back to now.
+        const previousTime = framesRef.current[indexRef.current]?.time;
+        const keep =
+          previousTime != null ? manifest.frames.findIndex((frame) => frame.time === previousTime) : -1;
+        setFrames(manifest.frames);
+        setWindow(manifest.window);
+        if (manifest.legend.length) setLegend(manifest.legend);
+        setIndex(keep >= 0 ? keep : radarNowIndex(manifest.frames));
+        setError(null);
+      })
+      .catch(() => {
+        if (mounted.current && framesRef.current.length === 0) {
+          setError('Radar is unavailable right now.');
+        }
+      });
+  }, []);
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 75_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  useOnAppResume(load);
 
   const frame = frames[index];
   const stamp = frame ? formatRadarTime(frame.time) : null;
@@ -182,8 +205,8 @@ export default function RadarScreen() {
           <View style={styles.legend} pointerEvents="none">
             <Text style={styles.legendLabel}>Heavy</Text>
             <View style={styles.swatches}>
-              {[...LEGEND].reverse().map((color) => (
-                <View key={color} style={[styles.swatch, { backgroundColor: color }]} />
+              {[...legend].reverse().map((stop) => (
+                <View key={stop.dbz} style={[styles.swatch, { backgroundColor: stop.color }]} />
               ))}
             </View>
             <Text style={styles.legendLabel}>Light</Text>
@@ -205,7 +228,7 @@ export default function RadarScreen() {
             style={({ pressed: isPressed }) => [styles.play, isPressed && pressed]}>
             <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.text} />
           </Pressable>
-          <RadarTimeline frames={frames} index={index} onSeek={seekTo} />
+          <RadarTimeline frames={frames} index={index} onSeek={seekTo} window={window} />
           <View style={styles.stampWrap}>
             <Text style={styles.stamp}>{stamp?.clock ?? '--:--'}</Text>
             {stamp ? <Text style={styles.stampRelative}>{stamp.relative}</Text> : null}

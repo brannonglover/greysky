@@ -24,9 +24,9 @@ const styles = StyleSheet.create({
   },
   temp: {
     color: colors.text,
-    fontFamily: fonts.display,
+    fontFamily: fonts.monoMedium,
     fontSize: 96,
-    letterSpacing: -1.8,
+    letterSpacing: -1.2,
     lineHeight: 110,
     fontVariant: typography.tabular,
   },

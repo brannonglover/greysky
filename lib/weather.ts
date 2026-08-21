@@ -387,61 +387,65 @@ export async function searchPlaces(query: string): Promise<GeoResult[]> {
   return json.results ?? [];
 }
 
-export type RainFrame = {
-  time: number;
-  host: string;
-  path: string;
+/**
+ * Radar comes from our NOAA service: observed frames are NOAA GeoServer WMS
+ * layers the map loads directly, and forecast frames are HRRR reflectivity
+ * tiles the service renders. See server/ for the implementation.
+ */
+export const RADAR_API =
+  process.env.EXPO_PUBLIC_RADAR_API?.replace(/\/$/, '') ?? 'https://grey-sky-radar.vercel.app';
+
+export type RadarWms = {
+  url: string;
+  params: Record<string, string>;
 };
 
-const RADAR_PAST_SEC = 30 * 60;
-const RADAR_FUTURE_SEC = 30 * 60;
+export type RadarFrame = {
+  time: number;
+  kind: 'observed' | 'forecast';
+  /** Present on observed frames; the map mounts these as Leaflet WMS layers. */
+  wms?: RadarWms;
+  /** Present on forecast frames; a plain XYZ template. */
+  urlTemplate?: string;
+};
 
-type RadarStamp = { time: number; path: string };
+export type RadarLegendStop = { dbz: number; color: string };
 
-export function radarHourWindow(nowSec = Date.now() / 1000): { start: number; end: number } {
-  return { start: nowSec - RADAR_PAST_SEC, end: nowSec + RADAR_FUTURE_SEC };
+export type RadarManifest = {
+  generated: number;
+  window: { pastMin: number; futureMin: number };
+  legend: RadarLegendStop[];
+  frames: RadarFrame[];
+};
+
+const DEFAULT_WINDOW = { pastMin: 60, futureMin: 60 };
+
+export function radarWindow(
+  window: { pastMin: number; futureMin: number } = DEFAULT_WINDOW,
+  nowSec = Date.now() / 1000,
+): { start: number; end: number } {
+  return { start: nowSec - window.pastMin * 60, end: nowSec + window.futureMin * 60 };
 }
 
-/** Observed radar from the last 30 minutes plus nowcast through the next 30 minutes. */
-export function selectRadarHourFrames(past: RadarStamp[], nowcast: RadarStamp[], nowSec = Date.now() / 1000): RadarStamp[] {
-  const { start, end } = radarHourWindow(nowSec);
-  const observed = past.filter((frame) => frame.time >= start && frame.time <= nowSec + 90);
-  const future = nowcast.filter((frame) => frame.time > nowSec && frame.time <= end);
-  const byTime = new Map<number, RadarStamp>();
-  for (const frame of [...observed, ...future]) byTime.set(frame.time, frame);
-  return [...byTime.values()].sort((a, b) => a.time - b.time);
-}
-
+/** Index of the frame closest to now, preferring an observation over a forecast. */
 export function radarNowIndex(frames: { time: number }[], nowSec = Date.now() / 1000): number {
   if (frames.length === 0) return 0;
-  const observed = frames
-    .map((frame, index) => ({ frame, index }))
-    .filter((item) => item.frame.time <= nowSec + 90);
-  const pool = observed.length ? observed : frames.map((frame, index) => ({ frame, index }));
-  return pool.reduce((best, item) => {
-    const closer = Math.abs(item.frame.time - nowSec) < Math.abs(frames[best].time - nowSec);
-    return closer ? item.index : best;
-  }, pool[0].index);
+  let best = 0;
+  for (let i = 1; i < frames.length; i += 1) {
+    if (Math.abs(frames[i].time - nowSec) < Math.abs(frames[best].time - nowSec)) best = i;
+  }
+  return best;
 }
 
-export async function fetchRadarFrames(): Promise<RainFrame[]> {
-  const response = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+export async function fetchRadarManifest(): Promise<RadarManifest> {
+  const response = await fetch(`${RADAR_API}/api/radar/frames`);
   if (!response.ok) throw new Error('Radar unavailable');
-  const json = (await response.json()) as {
-    host: string;
-    radar: {
-      past: RadarStamp[];
-      nowcast: RadarStamp[];
-    };
+  const json = (await response.json()) as Partial<RadarManifest>;
+  if (!Array.isArray(json.frames) || json.frames.length === 0) throw new Error('Radar unavailable');
+  return {
+    generated: json.generated ?? Math.round(Date.now() / 1000),
+    window: json.window ?? DEFAULT_WINDOW,
+    legend: json.legend ?? [],
+    frames: json.frames,
   };
-  const host = json.host.startsWith('http') ? json.host : `https://${json.host}`;
-  return selectRadarHourFrames(json.radar.past ?? [], json.radar.nowcast ?? []).map((frame) => ({
-    time: frame.time,
-    host,
-    path: frame.path,
-  }));
-}
-
-export function radarTileUrl(frame: RainFrame): string {
-  return `${frame.host}${frame.path}/256/{z}/{x}/{y}/8/1_1.png`;
 }

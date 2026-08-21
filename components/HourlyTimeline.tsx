@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Line, Path } from 'react-native-svg';
 
@@ -10,9 +10,9 @@ import { iconForLikelyWeather, isPrecipComing, precipIsLikely, rainStartsInMinut
 import { intensityFromHourlyMm } from '@/lib/precip';
 import { radarIntensityAt, radarIsWet, sampleRadarAtPoint, type RadarSample } from '@/lib/radarAtPoint';
 import { zonedIsoToMs } from '@/lib/time';
+import { useOnAppResume } from '@/lib/useOnAppResume';
 import type { HourPoint, MinutePoint, Units } from '@/lib/types';
 import { displayTemp, formatPrecip, hasPrecipAmount } from '@/lib/units';
-import { fetchRadarFrames } from '@/lib/weather';
 import type { IconName } from '@/lib/wmo';
 
 type Props = {
@@ -128,26 +128,27 @@ export function HourlyTimeline({ hours, units, minutes, timezone }: Props) {
   const { coords } = useApp();
   const [radar, setRadar] = useState<RadarSample[]>([]);
 
-  useEffect(() => {
+  // Point sampling is slow enough that a coords change can land out of order.
+  const requestId = useRef(0);
+  const load = useCallback(() => {
     if (!coords) return;
-    let cancelled = false;
-    const load = () => {
-      fetchRadarFrames()
-        .then((frames) => sampleRadarAtPoint(coords.latitude, coords.longitude, frames))
-        .then((samples) => {
-          if (!cancelled) setRadar(samples);
-        })
-        .catch(() => {
-          if (!cancelled) setRadar([]);
-        });
-    };
+    const id = ++requestId.current;
+    sampleRadarAtPoint(coords.latitude, coords.longitude)
+      .then((samples) => {
+        if (id === requestId.current) setRadar(samples);
+      })
+      .catch(() => {
+        if (id === requestId.current) setRadar([]);
+      });
+  }, [coords]);
+
+  useEffect(() => {
     load();
     const timer = setInterval(load, 75_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [coords]);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  useOnAppResume(load);
 
   const model = useMemo(
     () =>

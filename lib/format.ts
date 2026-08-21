@@ -75,7 +75,8 @@ export function formatRadarTime(unixSec: number): { clock: string; relative: str
     minute: '2-digit',
   });
   const deltaMin = Math.round((unixSec * 1000 - Date.now()) / 60_000);
-  if (Math.abs(deltaMin) < 8) return { clock, relative: 'Now' };
+  // Narrower than the 5-minute observation cadence so only one frame reads "Now".
+  if (Math.abs(deltaMin) < 3) return { clock, relative: 'Now' };
   if (deltaMin > 0) return { clock, relative: `+${deltaMin} min` };
   return { clock, relative: `−${Math.abs(deltaMin)} min` };
 }

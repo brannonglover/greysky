@@ -1,0 +1,26 @@
+{
+  "name": "weather-radar-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NOAA radar tile service: MRMS observed frames and HRRR forecast reflectivity tiles",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.ts",
+    "preview": "tsx scripts/radar-preview.ts"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@mattnucc/gribberish": "^1.7.0",
+    "pngjs": "^7.0.0",
+    "proj4": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/pngjs": "^6.0.5",
+    "@types/proj4": "^2.5.6",
+    "@vercel/node": "^5.10.2",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

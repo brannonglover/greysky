@@ -15,6 +15,7 @@ import {
   saveSelectedLocationId,
   saveSettings,
 } from '@/lib/storage';
+import { useOnAppResume } from '@/lib/useOnAppResume';
 import { fetchAlerts, fetchForecast } from '@/lib/weather';
 
 type PermissionState = Location.PermissionStatus | 'undetermined';
@@ -43,6 +44,11 @@ type AppState = {
 };
 
 const AppContext = createContext<AppState | null>(null);
+
+/** How stale the forecast may get before the foreground timer re-fetches it. */
+const AUTO_REFRESH_MS = 10 * 60_000;
+/** Returning to the app only re-locates if the data has had time to drift. */
+const RESUME_STALE_MS = 2 * 60_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -93,7 +99,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const loadWeatherAt = useCallback(
     async (latitude: number, longitude: number, name: string, subtitle: string, persistId: string | 'current') => {
-      setCoords({ latitude, longitude });
+      // Keep the identity stable when the fix has not moved, so the automatic
+      // refresh does not cascade into re-fetches by everything keyed on coords.
+      setCoords((prev) =>
+        prev && prev.latitude === latitude && prev.longitude === longitude ? prev : { latitude, longitude },
+      );
       setPlaceName(name);
       setPlaceSubtitle(subtitle);
       const [forecast, alerts] = await Promise.all([
@@ -163,6 +173,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     [loadCurrentGps, loadWeatherAt, savedLocations, selectedId, weather],
   );
+
+  // Snapshot of everything the automatic refreshes read, so the timer and the
+  // resume handler can stay mounted once instead of tearing down on every
+  // state change.
+  const live = useRef({ loading, refreshing, coords, placeName, placeSubtitle, selectedId, lastUpdated, refresh });
+  live.current = { loading, refreshing, coords, placeName, placeSubtitle, selectedId, lastUpdated, refresh };
+
+  const autoRefresh = useCallback(
+    async (maxAgeMs: number, relocate: boolean) => {
+      const state = live.current;
+      if (state.loading || state.refreshing) return;
+      if (Date.now() - (state.lastUpdated?.getTime() ?? 0) < maxAgeMs) return;
+      try {
+        // A resume may follow the user moving, so that path re-reads GPS. The
+        // timer keeps the existing fix to avoid waking the radio every tick.
+        if (relocate) {
+          await state.refresh();
+        } else if (state.coords) {
+          await loadWeatherAt(
+            state.coords.latitude,
+            state.coords.longitude,
+            state.placeName,
+            state.placeSubtitle,
+            state.selectedId,
+          );
+        }
+      } catch {
+        // Silent: this runs without the user asking, and the visible error
+        // state belongs to explicit refreshes.
+      }
+    },
+    [loadWeatherAt],
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => void autoRefresh(AUTO_REFRESH_MS, false), 60_000);
+    return () => clearInterval(timer);
+  }, [autoRefresh]);
+
+  useOnAppResume(() => void autoRefresh(RESUME_STALE_MS, true));
 
   useEffect(() => {
     let cancelled = false;

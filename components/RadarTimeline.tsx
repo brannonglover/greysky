@@ -1,9 +1,9 @@
 import * as Haptics from 'expo-haptics';
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 
 import { colors, fonts } from '@/constants/theme';
-import { radarHourWindow, radarNowIndex } from '@/lib/weather';
+import { radarWindow } from '@/lib/weather';
 
 type Frame = {
   time: number;
@@ -13,6 +13,7 @@ type Props = {
   frames: Frame[];
   index: number;
   onSeek: (index: number) => void;
+  window?: { pastMin: number; futureMin: number };
 };
 
 const styles = StyleSheet.create({
@@ -56,9 +57,6 @@ const styles = StyleSheet.create({
     marginLeft: -3,
     borderRadius: 3,
     backgroundColor: 'rgba(255,255,255,0.28)',
-  },
-  tickFuture: {
-    backgroundColor: 'rgba(255,255,255,0.14)',
   },
   tickFilled: {
     backgroundColor: colors.precip,
@@ -110,6 +108,18 @@ const styles = StyleSheet.create({
   },
 });
 
+function edgeLabel(minutes: number): string {
+  return minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+}
+
+/**
+ * Frames left over from before a long background sit outside the window, and
+ * clamping would stack them all on one edge. Drop them until a refresh lands.
+ */
+function inWindow(time: number, start: number, end: number): boolean {
+  return time >= start && time <= end;
+}
+
 function pctForTime(time: number, start: number, end: number): number {
   const span = Math.max(1, end - start);
   return Math.max(0, Math.min(100, ((time - start) / span) * 100));
@@ -123,15 +133,24 @@ function indexFromX(x: number, width: number, frames: Frame[], start: number, en
   }, 0);
 }
 
-export function RadarTimeline({ frames, index, onSeek }: Props) {
+export function RadarTimeline({ frames, index, onSeek, window }: Props) {
   const widthRef = useRef(1);
   const originX = useRef(0);
   const lastIndex = useRef(index);
   lastIndex.current = index;
 
+  // Re-render on a timer so the Now marker and thumb keep drifting between
+  // frame refreshes rather than freezing wherever the last render left them.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((value) => value + 1), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const pastMin = window?.pastMin ?? 60;
+  const futureMin = window?.futureMin ?? 60;
   const nowSec = Date.now() / 1000;
-  const { start, end } = radarHourWindow(nowSec);
-  const nowIndex = radarNowIndex(frames, nowSec);
+  const { start, end } = radarWindow(window, nowSec);
   const current = frames[index];
   const thumbPct = current ? pctForTime(current.time, start, end) : 0;
   const nowPct = pctForTime(nowSec, start, end);
@@ -163,7 +182,7 @@ export function RadarTimeline({ frames, index, onSeek }: Props) {
         }}
         onResponderMove={(event) => seekToX(xFromEvent(event))}
         accessibilityRole="adjustable"
-        accessibilityLabel="Radar time, one hour from 30 minutes ago to 30 minutes ahead"
+        accessibilityLabel={`Radar time, from ${edgeLabel(pastMin)} ago to ${edgeLabel(futureMin)} ahead`}
         accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
         onAccessibilityAction={(event) => {
           if (event.nativeEvent.actionName === 'increment') {
@@ -175,26 +194,28 @@ export function RadarTimeline({ frames, index, onSeek }: Props) {
         <View style={styles.axis} pointerEvents="none">
           <View style={styles.rail} />
           <View style={[styles.railPlayed, { width: `${playedPct}%` }]} />
-          {frames.map((item, i) => (
-            <View
-              key={item.time}
-              style={[
-                styles.tick,
-                { left: `${pctForTime(item.time, start, end)}%` },
-                item.time > nowSec + 60 && styles.tickFuture,
-                i <= index && styles.tickFilled,
-                i === nowIndex && { backgroundColor: '#FFFFFF', height: 12, top: 0 },
-              ]}
-            />
-          ))}
+          {frames.map((item, i) =>
+            inWindow(item.time, start, end) ? (
+              <View
+                key={item.time}
+                style={[
+                  styles.tick,
+                  { left: `${pctForTime(item.time, start, end)}%` },
+                  i <= index && styles.tickFilled,
+                ]}
+              />
+            ) : null,
+          )}
           <View style={[styles.nowLine, { left: `${nowPct}%` }]} />
         </View>
-        {current ? <View pointerEvents="none" style={[styles.thumb, { left: `${thumbPct}%` }]} /> : null}
+        {current && inWindow(current.time, start, end) ? (
+          <View pointerEvents="none" style={[styles.thumb, { left: `${thumbPct}%` }]} />
+        ) : null}
       </View>
       <View style={styles.labels} pointerEvents="none">
-        <Text style={[styles.label, styles.labelStart]}>−30m</Text>
+        <Text style={[styles.label, styles.labelStart]}>−{edgeLabel(pastMin)}</Text>
         <Text style={[styles.nowLabel, { left: `${nowPct}%` }]}>Now</Text>
-        <Text style={[styles.label, styles.labelEnd]}>+30m</Text>
+        <Text style={[styles.label, styles.labelEnd]}>+{edgeLabel(futureMin)}</Text>
       </View>
     </View>
   );

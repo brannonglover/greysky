@@ -1,33 +1,38 @@
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { DarkSkyRadar, type RadarViewFrame } from '@/components/DarkSkyRadar';
+import { DarkSkyRadar } from '@/components/DarkSkyRadar';
 import { colors, glass, pressed } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
-import { fetchRadarFrames, radarTileUrl } from '@/lib/weather';
+import { useOnAppResume } from '@/lib/useOnAppResume';
+import { fetchRadarManifest, type RadarFrame } from '@/lib/weather';
 
 export function ForecastMap() {
   const router = useRouter();
   const { coords } = useApp();
-  const [frames, setFrames] = useState<RadarViewFrame[]>([]);
+  const [frames, setFrames] = useState<RadarFrame[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchRadarFrames()
-      .then((next) => {
-        if (cancelled) return;
-        const mapped = next.map((frame) => ({ time: frame.time, urlTemplate: radarTileUrl(frame) }));
-        const nowSec = Date.now() / 1000;
+  const load = useCallback(() => {
+    fetchRadarManifest()
+      .then((manifest) => {
+        // The preview is a still, so show the most recent actual observation.
         const current =
-          [...mapped].reverse().find((frame) => frame.time <= nowSec + 90) ?? mapped.at(-1);
+          [...manifest.frames].reverse().find((frame) => frame.kind === 'observed') ??
+          manifest.frames.at(-1);
         setFrames(current ? [current] : []);
       })
       .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    load();
+    // Slower than the radar tab; this is a thumbnail, not an animation.
+    const timer = setInterval(load, 5 * 60_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  useOnAppResume(load);
 
   if (!coords) return null;
 
