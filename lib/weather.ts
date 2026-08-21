@@ -393,18 +393,49 @@ export type RainFrame = {
   path: string;
 };
 
+const RADAR_PAST_SEC = 30 * 60;
+const RADAR_FUTURE_SEC = 30 * 60;
+
+type RadarStamp = { time: number; path: string };
+
+export function radarHourWindow(nowSec = Date.now() / 1000): { start: number; end: number } {
+  return { start: nowSec - RADAR_PAST_SEC, end: nowSec + RADAR_FUTURE_SEC };
+}
+
+/** Observed radar from the last 30 minutes plus nowcast through the next 30 minutes. */
+export function selectRadarHourFrames(past: RadarStamp[], nowcast: RadarStamp[], nowSec = Date.now() / 1000): RadarStamp[] {
+  const { start, end } = radarHourWindow(nowSec);
+  const observed = past.filter((frame) => frame.time >= start && frame.time <= nowSec + 90);
+  const future = nowcast.filter((frame) => frame.time > nowSec && frame.time <= end);
+  const byTime = new Map<number, RadarStamp>();
+  for (const frame of [...observed, ...future]) byTime.set(frame.time, frame);
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
+export function radarNowIndex(frames: { time: number }[], nowSec = Date.now() / 1000): number {
+  if (frames.length === 0) return 0;
+  const observed = frames
+    .map((frame, index) => ({ frame, index }))
+    .filter((item) => item.frame.time <= nowSec + 90);
+  const pool = observed.length ? observed : frames.map((frame, index) => ({ frame, index }));
+  return pool.reduce((best, item) => {
+    const closer = Math.abs(item.frame.time - nowSec) < Math.abs(frames[best].time - nowSec);
+    return closer ? item.index : best;
+  }, pool[0].index);
+}
+
 export async function fetchRadarFrames(): Promise<RainFrame[]> {
   const response = await fetch('https://api.rainviewer.com/public/weather-maps.json');
   if (!response.ok) throw new Error('Radar unavailable');
   const json = (await response.json()) as {
     host: string;
     radar: {
-      past: { time: number; path: string }[];
-      nowcast: { time: number; path: string }[];
+      past: RadarStamp[];
+      nowcast: RadarStamp[];
     };
   };
   const host = json.host.startsWith('http') ? json.host : `https://${json.host}`;
-  return [...json.radar.past.slice(-8), ...json.radar.nowcast].map((frame) => ({
+  return selectRadarHourFrames(json.radar.past ?? [], json.radar.nowcast ?? []).map((frame) => ({
     time: frame.time,
     host,
     path: frame.path,

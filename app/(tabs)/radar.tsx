@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -8,7 +8,7 @@ import { RadarTimeline } from '@/components/RadarTimeline';
 import { colors, fonts, pressed } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { formatRadarTime } from '@/lib/format';
-import { fetchRadarFrames, radarTileUrl } from '@/lib/weather';
+import { fetchRadarFrames, radarNowIndex, radarTileUrl } from '@/lib/weather';
 
 const LEGEND = ['#5CE1FF', '#2F80ED', '#F5D76E', '#FF7EB6', '#E040FB'] as const;
 
@@ -121,20 +121,33 @@ export default function RadarScreen() {
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const framesRef = useRef<RadarViewFrame[]>([]);
+  const indexRef = useRef(0);
+  framesRef.current = frames;
+  indexRef.current = index;
 
   useEffect(() => {
     let cancelled = false;
-    fetchRadarFrames()
-      .then((next) => {
-        if (cancelled) return;
-        setFrames(next.map((frame) => ({ time: frame.time, urlTemplate: radarTileUrl(frame) })));
-        setIndex(Math.max(0, next.length - 3));
-      })
-      .catch(() => {
-        if (!cancelled) setError('Radar is unavailable right now.');
-      });
+    const load = () => {
+      fetchRadarFrames()
+        .then((next) => {
+          if (cancelled) return;
+          const mapped = next.map((frame) => ({ time: frame.time, urlTemplate: radarTileUrl(frame) }));
+          const previousTime = framesRef.current[indexRef.current]?.time;
+          const keep = previousTime != null ? mapped.findIndex((frame) => frame.time === previousTime) : -1;
+          setFrames(mapped);
+          setIndex(keep >= 0 ? keep : radarNowIndex(mapped));
+          setError(null);
+        })
+        .catch(() => {
+          if (!cancelled && framesRef.current.length === 0) setError('Radar is unavailable right now.');
+        });
+    };
+    load();
+    const timer = setInterval(load, 75_000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, []);
 

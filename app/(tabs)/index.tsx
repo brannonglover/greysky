@@ -208,6 +208,7 @@ export default function ForecastScreen() {
                 hours={weather.hourly}
                 units={settings.units}
                 minutes={weather.minutely}
+                timezone={weather.timezone}
               />
               <DailyForecast days={weather.daily} hours={weather.hourly} units={settings.units} />
               {urgent ? null : map}
