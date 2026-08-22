@@ -1,16 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Line, Path } from 'react-native-svg';
 
 import { WeatherIcon } from '@/components/WeatherIcon';
 import { colors, fonts, glass, typeStyles, typography } from '@/constants/theme';
-import { useApp } from '@/context/AppContext';
 import { formatHourCompact } from '@/lib/format';
 import { iconForLikelyWeather, isPrecipComing, precipIsLikely, rainStartsInMinutes, rainStopsInMinutes } from '@/lib/nowcast';
 import { intensityFromHourlyMm } from '@/lib/precip';
-import { radarIntensityAt, radarIsWet, sampleRadarAtPoint, type RadarSample } from '@/lib/radarAtPoint';
+import {
+  RADAR_WET_INTENSITY,
+  radarIntensityAt,
+  radarIsWet,
+  radarWetAt,
+  type RadarSample,
+} from '@/lib/radarAtPoint';
 import { zonedIsoToMs } from '@/lib/time';
-import { useOnAppResume } from '@/lib/useOnAppResume';
 import type { HourPoint, MinutePoint, Units } from '@/lib/types';
 import { displayTemp, formatPrecip, hasPrecipAmount } from '@/lib/units';
 import type { IconName } from '@/lib/wmo';
@@ -20,6 +24,7 @@ type Props = {
   units: Units;
   minutes?: MinutePoint[];
   timezone?: string;
+  radar?: RadarSample[];
 };
 
 const COL_W = 72;
@@ -124,32 +129,7 @@ const styles = StyleSheet.create({
   },
 });
 
-export function HourlyTimeline({ hours, units, minutes, timezone }: Props) {
-  const { coords } = useApp();
-  const [radar, setRadar] = useState<RadarSample[]>([]);
-
-  // Point sampling is slow enough that a coords change can land out of order.
-  const requestId = useRef(0);
-  const load = useCallback(() => {
-    if (!coords) return;
-    const id = ++requestId.current;
-    sampleRadarAtPoint(coords.latitude, coords.longitude)
-      .then((samples) => {
-        if (id === requestId.current) setRadar(samples);
-      })
-      .catch(() => {
-        if (id === requestId.current) setRadar([]);
-      });
-  }, [coords]);
-
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 75_000);
-    return () => clearInterval(timer);
-  }, [load]);
-
-  useOnAppResume(load);
-
+export function HourlyTimeline({ hours, units, minutes, timezone, radar = [] }: Props) {
   const model = useMemo(
     () =>
       hours.slice(0, 12).map((hour, index) => {
@@ -158,7 +138,9 @@ export function HourlyTimeline({ hours, units, minutes, timezone }: Props) {
         const modelIntensity = intensityFromHourlyMm(hour.precipitation);
         const intensity = fromRadar != null ? fromRadar : modelIntensity;
         const raining =
-          (fromRadar != null && fromRadar > 0.12) || precipIsLikely(hour.precipitationProbability, hour.precipitation);
+          fromRadar != null
+            ? fromRadar > RADAR_WET_INTENSITY
+            : precipIsLikely(hour.precipitationProbability, hour.precipitation);
         let icon: IconName = iconForLikelyWeather(
           hour.weatherCode,
           hour.isDay,
@@ -167,8 +149,8 @@ export function HourlyTimeline({ hours, units, minutes, timezone }: Props) {
           hour.cloudCover,
         );
         if (fromRadar != null && fromRadar > 0.2) icon = 'rain';
-        else if (fromRadar != null && fromRadar > 0.12) icon = 'drizzle';
-        else if (fromRadar != null && fromRadar < 0.08) {
+        else if (fromRadar != null && fromRadar > RADAR_WET_INTENSITY) icon = 'drizzle';
+        else if (fromRadar != null) {
           icon = iconForLikelyWeather(hour.weatherCode, hour.isDay, 0, 0, hour.cloudCover);
         }
         return {
@@ -185,7 +167,9 @@ export function HourlyTimeline({ hours, units, minutes, timezone }: Props) {
     [hours, radar, timezone, units],
   );
 
-  const showPrecip = radarIsWet(radar) || isPrecipComing(minutes, hours);
+  const radarCoversNow = radarWetAt(radar, Date.now() / 1000) != null;
+  // When NOAA is on the pin, it wins over Open-Meteo leftover QPF.
+  const showPrecip = radarCoversNow ? radarIsWet(radar) : isPrecipComing(minutes, hours);
   const chartW = Math.max(COL_W, model.length * COL_W);
 
   const rainSpan = useMemo(() => {
@@ -241,7 +225,7 @@ export function HourlyTimeline({ hours, units, minutes, timezone }: Props) {
     const stops = minutes ? rainStopsInMinutes(minutes) : null;
     const nowRadar = radarIntensityAt(radar, Date.now() / 1000);
     let headline = 'RAIN THIS HOUR';
-    if (nowRadar != null && nowRadar > 0.12) headline = 'RAIN AT YOUR LOCATION';
+    if (nowRadar != null && nowRadar > RADAR_WET_INTENSITY) headline = 'RAIN AT YOUR LOCATION';
     else if (starts != null) headline = `RAIN IN ${starts} MIN`;
     else if (stops != null && stops < 55) headline = `RAIN ${stops} MIN LEFT`;
     return amount ? `${headline} · ${amount}` : headline;

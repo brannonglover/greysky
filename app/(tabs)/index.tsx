@@ -25,6 +25,8 @@ import { SkyBackdrop } from '@/components/SkyBackdrop';
 import { colors, fonts, pressed, radii, spacing } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { formatTemp } from '@/lib/units';
+import { RADAR_WET_INTENSITY, radarIntensityAt } from '@/lib/radarAtPoint';
+import { useRadarAtPoint } from '@/lib/useRadarAtPoint';
 import { shouldPromoteRadarMap } from '@/lib/weather';
 
 const styles = StyleSheet.create({
@@ -106,9 +108,11 @@ export default function ForecastScreen() {
     permission,
     settings,
     sky,
+    coords,
     refresh,
     requestPermission,
   } = useApp();
+  const radar = useRadarAtPoint(coords);
 
   const onRefresh = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -183,11 +187,13 @@ export default function ForecastScreen() {
   const shareMessage = `${placeName}: ${formatTemp(weather.current.temperature, settings.units)} · ${weather.nowcastSummary}`;
   const urgent = shouldPromoteRadarMap(weather);
   const map = <ForecastMap />;
+  const radarNow = radarIntensityAt(radar, Date.now() / 1000);
+  const rainIntensity = radarNow != null && radarNow <= RADAR_WET_INTENSITY ? 0 : sky.rain;
 
   return (
     <SkyBackdrop>
       <View style={styles.screen} collapsable={false}>
-        <RainField intensity={sky.rain} />
+        <RainField intensity={rainIntensity} />
         <SafeAreaView style={styles.safe} edges={['top']} collapsable={false}>
           <ForecastHeader shareMessage={shareMessage} />
           <ScrollView
@@ -209,6 +215,7 @@ export default function ForecastScreen() {
                 units={settings.units}
                 minutes={weather.minutely}
                 timezone={weather.timezone}
+                radar={radar}
               />
               <DailyForecast days={weather.daily} hours={weather.hourly} units={settings.units} />
               {urgent ? null : map}

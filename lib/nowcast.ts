@@ -2,12 +2,15 @@ import { wallHour, zonedIsoToMs } from './time';
 import type { DayPoint, HourPoint, MinutePoint } from './types';
 import { iconForCode, isHeavyRainOrStormCode, isPrecipCode, isSnowCode, labelForCode } from './wmo';
 
-/** 15-min total that counts as wet (~0.2 mm/hr). Low enough for storm onset, not dry-day noise. */
-const WET_MM = 0.05;
+/**
+ * 15-min total that counts as wet on its own (~1 mm/hr). Below this, leftover
+ * model drizzle with a low PoP was opening the rain UI on dry-radar days.
+ */
+const WET_MM = 0.25;
 /** Show the nowcast / notify when rain is expected, not only after it is already heavy. */
 export const PRECIP_LIKELY_PCT = 40;
-/** Measurable hourly rain (mm), used with chance so trace leftover does not open the graph. */
-const HOUR_WET_MM = 0.2;
+/** Hourly amount that can stand in for a low PoP — light rain, not a trace. */
+const HOUR_WET_MM = 1;
 
 export function precipIsLikely(chance: number, amountMm: number): boolean {
   return chance >= PRECIP_LIKELY_PCT || amountMm >= HOUR_WET_MM;
@@ -25,10 +28,10 @@ export function iconForLikelyWeather(
   code: number,
   isDay: boolean,
   chance: number,
-  amountMm: number,
+  _amountMm: number,
   cloudCover?: number,
 ) {
-  if (isPrecipCode(code) && !precipIsLikely(chance, amountMm)) {
+  if (isPrecipCode(code) && chance < PRECIP_LIKELY_PCT) {
     return skyIconForClouds(cloudCover, isDay);
   }
   return iconForCode(code, isDay);
@@ -37,10 +40,10 @@ export function iconForLikelyWeather(
 export function labelForLikelyWeather(
   code: number,
   chance: number,
-  amountMm: number,
+  _amountMm: number,
   cloudCover?: number,
 ): string {
-  if (isPrecipCode(code) && !precipIsLikely(chance, amountMm)) {
+  if (isPrecipCode(code) && chance < PRECIP_LIKELY_PCT) {
     const cover = cloudCover ?? 80;
     if (cover >= 85) return 'Overcast';
     if (cover >= 40) return 'Partly cloudy';

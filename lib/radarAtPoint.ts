@@ -59,6 +59,15 @@ export function radarIntensityAt(samples: RadarSample[], targetSec: number): num
   return sorted[0].intensity;
 }
 
+/** Matches a light echo on the 0–1 intensity scale (~10 dBZ / measurable rain). */
+export const RADAR_WET_INTENSITY = 0.12;
+
+export function radarWetAt(samples: RadarSample[], targetSec: number): boolean | null {
+  const intensity = radarIntensityAt(samples, targetSec);
+  if (intensity == null) return null;
+  return intensity > RADAR_WET_INTENSITY;
+}
+
 export function radarIsWet(samples: RadarSample[]): boolean {
-  return samples.some((sample) => sample.intensity > 0.12);
+  return samples.some((sample) => sample.intensity > RADAR_WET_INTENSITY);
 }
