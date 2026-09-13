@@ -21,7 +21,6 @@ export const unstable_settings = {
 };
 
 SplashScreen.preventAutoHideAsync();
-Appearance.setColorScheme('dark');
 
 const navigationTheme = {
   ...DarkTheme,
@@ -47,7 +46,7 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    Appearance.setColorScheme('dark');
+    Appearance.setColorScheme?.('dark');
     if (fontsLoaded || fontError) {
       SplashScreen.hideAsync();
     }

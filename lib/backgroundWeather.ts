@@ -3,7 +3,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
 import { alertsEnabled, syncWeatherNotifications } from './notifications';
-import { loadLastPlace, loadSettings } from './storage';
+import { loadLastPlace, loadSettings, saveWeatherCache } from './storage';
 import type { AlertPrefs } from './types';
 import { fetchAlerts, fetchForecast } from './weather';
 
@@ -41,12 +41,24 @@ if (Platform.OS !== 'web') {
         fetchForecast(place.latitude, place.longitude),
         fetchAlerts(place.latitude, place.longitude),
       ]);
-      await syncWeatherNotifications(
-        { ...forecast, alerts },
-        settings.alerts,
-        place.name,
-        settings.units,
-      );
+      const bundle = { ...forecast, alerts };
+      await Promise.all([
+        saveWeatherCache({
+          bundle,
+          placeName: place.name,
+          placeSubtitle: '',
+          latitude: place.latitude,
+          longitude: place.longitude,
+          selectedId: 'current',
+          timestamp: Date.now(),
+        }),
+        syncWeatherNotifications(
+          bundle,
+          settings.alerts,
+          place.name,
+          settings.units,
+        ),
+      ]);
       return BackgroundTaskResult.Success;
     } catch {
       return BackgroundTaskResult.Failed;

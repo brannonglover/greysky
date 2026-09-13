@@ -389,11 +389,19 @@ export async function searchPlaces(query: string): Promise<GeoResult[]> {
 
 /**
  * Radar comes from our NOAA service: observed frames are NOAA GeoServer WMS
- * layers the map loads directly, and forecast frames are HRRR reflectivity
- * tiles the service renders. See server/ for the implementation.
+ * layers the map loads directly, and forecast frames advect that last
+ * observation (falling back to HRRR tiles if the nowcast cannot run).
  */
 export const RADAR_API =
   process.env.EXPO_PUBLIC_RADAR_API?.replace(/\/$/, '') ?? 'https://grey-sky-radar.vercel.app';
+
+/**
+ * Radar tile source: 'default' uses MRMS observed + HRRR forecast (free, no
+ * API key needed).  'tomorrow' routes through Tomorrow.io for higher-quality
+ * minute-by-minute precipitation tiles (requires TOMORROW_API_KEY on the
+ * server).  Flip this constant to switch; no other code changes needed.
+ */
+export const RADAR_SOURCE: 'default' | 'tomorrow' = 'default';
 
 export type RadarWms = {
   url: string;
@@ -420,6 +428,28 @@ export type RadarManifest = {
 
 const DEFAULT_WINDOW = { pastMin: 60, futureMin: 60 };
 
+/** 5 minutes in seconds — the grid every frame should land on. */
+const FRAME_STEP_SEC = 5 * 60;
+
+/**
+ * Snap every frame's display time to the nearest :05 boundary and
+ * deduplicate so the timeline shows clean, evenly-spaced ticks.
+ */
+function snapFramesToGrid(frames: RadarFrame[]): RadarFrame[] {
+  const seen = new Map<number, { frame: RadarFrame; dist: number }>();
+  for (const frame of frames) {
+    const snapped = Math.round(frame.time / FRAME_STEP_SEC) * FRAME_STEP_SEC;
+    const dist = Math.abs(frame.time - snapped);
+    const existing = seen.get(snapped);
+    if (!existing || dist < existing.dist) {
+      seen.set(snapped, { frame: { ...frame, time: snapped }, dist });
+    }
+  }
+  return [...seen.values()]
+    .map((entry) => entry.frame)
+    .sort((a, b) => a.time - b.time);
+}
+
 export function radarWindow(
   window: { pastMin: number; futureMin: number } = DEFAULT_WINDOW,
   nowSec = Date.now() / 1000,
@@ -438,7 +468,8 @@ export function radarNowIndex(frames: { time: number }[], nowSec = Date.now() / 
 }
 
 export async function fetchRadarManifest(): Promise<RadarManifest> {
-  const response = await fetch(`${RADAR_API}/api/radar/frames`);
+  const sourceParam = RADAR_SOURCE === 'tomorrow' ? '?source=tomorrow' : '';
+  const response = await fetch(`${RADAR_API}/api/radar/frames${sourceParam}`);
   if (!response.ok) throw new Error('Radar unavailable');
   const json = (await response.json()) as Partial<RadarManifest>;
   if (!Array.isArray(json.frames) || json.frames.length === 0) throw new Error('Radar unavailable');
@@ -446,6 +477,6 @@ export async function fetchRadarManifest(): Promise<RadarManifest> {
     generated: json.generated ?? Math.round(Date.now() / 1000),
     window: json.window ?? DEFAULT_WINDOW,
     legend: json.legend ?? [],
-    frames: json.frames,
+    frames: snapFramesToGrid(json.frames),
   };
 }

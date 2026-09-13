@@ -66,3 +66,45 @@ export function renderTile(grid: Grid, z: number, x: number, y: number): Buffer 
 
   return PNG.sync.write(png);
 }
+
+/**
+ * Blend two HRRR grids from the same run and render the result.
+ * `t` is 0–1: 0 = pure gridA, 1 = pure gridB.
+ */
+export function renderBlendedTile(
+  gridA: Grid,
+  gridB: Grid,
+  t: number,
+  z: number,
+  x: number,
+  y: number,
+): Buffer {
+  const toGrid = proj4(WGS84, normalizeProj(gridA.proj));
+  const origin = toGrid.forward([gridA.lon0, gridA.lat0]);
+  const png = new PNG({ width: TILE_SIZE, height: TILE_SIZE });
+
+  const lons = new Float64Array(TILE_SIZE);
+  for (let px = 0; px < TILE_SIZE; px++) lons[px] = tileToLon(x + (px + 0.5) / TILE_SIZE, z);
+
+  const s = 1 - t;
+  for (let py = 0; py < TILE_SIZE; py++) {
+    const lat = tileToLat(y + (py + 0.5) / TILE_SIZE, z);
+    for (let px = 0; px < TILE_SIZE; px++) {
+      const [gx, gy] = toGrid.forward([lons[px], lat]);
+      const i = Math.round((gx - origin[0]) / DX);
+      const j = Math.round((gy - origin[1]) / DX);
+      if (i < 0 || i >= gridA.cols || j < 0 || j >= gridA.rows) continue;
+      const idx = j * gridA.cols + i;
+      const blended = s * gridA.values[idx] + t * gridB.values[idx];
+      const color = colorForDbz(blended);
+      if (!color) continue;
+      const o = (py * TILE_SIZE + px) * 4;
+      png.data[o] = color[0];
+      png.data[o + 1] = color[1];
+      png.data[o + 2] = color[2];
+      png.data[o + 3] = color[3];
+    }
+  }
+
+  return PNG.sync.write(png);
+}

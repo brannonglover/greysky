@@ -5,7 +5,7 @@ import { loadGrid, resolveFrame, type ForecastFrame, type Grid } from './hrrr';
  * tiles from one grid and a point query pulls every forecast step, so keeping a
  * few warm per instance avoids most of the work.
  */
-const MAX_ENTRIES = 4;
+const MAX_ENTRIES = 6;
 const grids = new Map<string, Promise<Grid>>();
 
 function remember(key: string, load: () => Promise<Grid>): Promise<Grid> {

@@ -129,7 +129,7 @@ export default function RadarScreen() {
   const [window, setWindow] = useState({ pastMin: 60, futureMin: 60 });
   const [legend, setLegend] = useState<RadarLegendStop[]>(FALLBACK_LEGEND);
   const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const framesRef = useRef<RadarFrame[]>([]);
   const indexRef = useRef(0);

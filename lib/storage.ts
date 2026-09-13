@@ -115,3 +115,36 @@ export async function loadNotifyState(): Promise<NotifyState> {
 export async function saveNotifyState(state: NotifyState): Promise<void> {
   await AsyncStorage.setItem(NOTIFY_STATE_KEY, JSON.stringify(state));
 }
+
+// ---------------------------------------------------------------------------
+// Weather cache – lets the background task persist a full forecast so the UI
+// can display it instantly on launch / resume instead of waiting for the network.
+// ---------------------------------------------------------------------------
+
+const WEATHER_CACHE_KEY = 'umbra.weatherCache';
+
+export type WeatherCache = {
+  bundle: import('./types').WeatherBundle;
+  placeName: string;
+  placeSubtitle: string;
+  latitude: number;
+  longitude: number;
+  selectedId: string | 'current';
+  timestamp: number;
+};
+
+export async function saveWeatherCache(cache: WeatherCache): Promise<void> {
+  await AsyncStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(cache));
+}
+
+export async function loadWeatherCache(): Promise<WeatherCache | null> {
+  try {
+    const raw = await AsyncStorage.getItem(WEATHER_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<WeatherCache>;
+    if (!parsed.bundle || typeof parsed.timestamp !== 'number') return null;
+    return parsed as WeatherCache;
+  } catch {
+    return null;
+  }
+}

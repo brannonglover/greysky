@@ -6,8 +6,8 @@
       "maxDuration": 30
     },
     "api/radar/frames.ts": {
-      "memory": 512,
-      "maxDuration": 15
+      "memory": 1024,
+      "maxDuration": 20
     }
   }
 }

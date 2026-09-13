@@ -10,10 +10,12 @@ import {
   loadSavedLocations,
   loadSelectedLocationId,
   loadSettings,
+  loadWeatherCache,
   saveLastPlace,
   saveSavedLocations,
   saveSelectedLocationId,
   saveSettings,
+  saveWeatherCache,
 } from '@/lib/storage';
 import { useOnAppResume } from '@/lib/useOnAppResume';
 import { fetchAlerts, fetchForecast } from '@/lib/weather';
@@ -116,7 +118,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       setSelectedId(persistId);
       await saveSelectedLocationId(persistId);
-      await saveLastPlace({ latitude, longitude, name });
+      await Promise.all([
+        saveLastPlace({ latitude, longitude, name }),
+        saveWeatherCache({
+          bundle,
+          placeName: name,
+          placeSubtitle: subtitle,
+          latitude,
+          longitude,
+          selectedId: persistId,
+          timestamp: Date.now(),
+        }),
+      ]);
       const currentSettings = settingsRef.current;
       void (async () => {
         if (alertsEnabled(currentSettings.alerts)) {
@@ -184,6 +197,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (maxAgeMs: number, relocate: boolean) => {
       const state = live.current;
       if (state.loading || state.refreshing) return;
+
+      // On resume, check whether the background task cached fresher data while
+      // the app was suspended.  If so, apply it instantly so the UI is already
+      // up-to-date before the network fetch completes.
+      if (relocate) {
+        try {
+          const cached = await loadWeatherCache();
+          if (cached && cached.timestamp > (state.lastUpdated?.getTime() ?? 0)) {
+            setWeather(cached.bundle);
+            setPlaceName(cached.placeName);
+            setPlaceSubtitle(cached.placeSubtitle);
+            setCoords({ latitude: cached.latitude, longitude: cached.longitude });
+            setLastUpdated(new Date(cached.timestamp));
+          }
+        } catch {
+          // Cache read is best-effort.
+        }
+      }
+
       if (Date.now() - (state.lastUpdated?.getTime() ?? 0) < maxAgeMs) return;
       try {
         // A resume may follow the user moving, so that path re-reads GPS. The
@@ -217,7 +249,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [storedSettings, storedLocations, storedSelected, perm] = await Promise.all([
+      const [storedSettings, storedLocations, storedSelected, perm, cached] = await Promise.all([
         loadSettings(),
         loadSavedLocations(),
         loadSelectedLocationId(),
@@ -226,12 +258,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           4000,
           'Location permission timed out.',
         ).catch(() => ({ status: Location.PermissionStatus.UNDETERMINED })),
+        loadWeatherCache(),
       ]);
       if (cancelled) return;
       setSettings(storedSettings);
       setSavedLocations(storedLocations);
       setSelectedId(storedSelected);
       setPermission(perm.status);
+
+      // Instantly show cached weather (may have been refreshed by background
+      // task) so the user sees content the moment the app opens.
+      if (cached && cached.selectedId === storedSelected) {
+        setWeather(cached.bundle);
+        setPlaceName(cached.placeName);
+        setPlaceSubtitle(cached.placeSubtitle);
+        setCoords({ latitude: cached.latitude, longitude: cached.longitude });
+        setLastUpdated(new Date(cached.timestamp));
+        setLoading(false);
+      }
 
       try {
         if (storedSelected !== 'current') {

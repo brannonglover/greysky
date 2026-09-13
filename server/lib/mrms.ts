@@ -1,5 +1,5 @@
-const WMS_BASE = 'https://opengeo.ncep.noaa.gov/geoserver/conus/conus_cref_qcd/ows';
-const LAYER = 'conus_cref_qcd';
+export const WMS_BASE = 'https://opengeo.ncep.noaa.gov/geoserver/conus/conus_cref_qcd/ows';
+export const LAYER = 'conus_cref_qcd';
 
 export type ObservedFrame = {
   time: number;
@@ -26,8 +26,9 @@ export async function observedTimes(): Promise<string[]> {
 }
 
 /**
- * Pick frames back to `windowMin` ago, thinned to roughly `cadenceMin` apart so
- * the animation stays a manageable length.
+ * Pick frames back to `windowMin` ago, snapped to the :05 grid (cadenceMin
+ * boundaries) so the timeline shows clean intervals. Each slot uses the closest
+ * MRMS observation within half a cadence.
  */
 export function selectObserved(times: string[], windowMin: number, cadenceMin: number, now = Date.now()): ObservedFrame[] {
   const cutoff = now - windowMin * 60_000;
@@ -36,15 +37,31 @@ export function selectObserved(times: string[], windowMin: number, cadenceMin: n
     .filter((entry) => Number.isFinite(entry.ms) && entry.ms >= cutoff && entry.ms <= now)
     .sort((a, b) => a.ms - b.ms);
 
+  if (candidates.length === 0) return [];
+
+  const slotMs = cadenceMin * 60_000;
+  const tolerance = slotMs / 2;
+  const firstSlot = Math.ceil(cutoff / slotMs) * slotMs;
+
   const picked: ObservedFrame[] = [];
-  // Walk newest to oldest so the most recent observation is always included.
-  for (let i = candidates.length - 1; i >= 0; i--) {
-    const entry = candidates[i];
-    const last = picked[picked.length - 1];
-    if (last && last.time * 1000 - entry.ms < cadenceMin * 60_000) continue;
-    picked.push({ time: Math.round(entry.ms / 1000), isoTime: entry.isoTime });
+  for (let slot = firstSlot; slot <= now; slot += slotMs) {
+    let best: { isoTime: string; ms: number } | null = null;
+    let bestDist = Infinity;
+    for (const c of candidates) {
+      const dist = Math.abs(c.ms - slot);
+      if (dist < bestDist && dist <= tolerance) {
+        best = c;
+        bestDist = dist;
+      }
+    }
+    if (!best) continue;
+    if (picked.length > 0 && picked[picked.length - 1].isoTime === best.isoTime) continue;
+    picked.push({
+      time: Math.round(slot / 1000),
+      isoTime: best.isoTime,
+    });
   }
-  return picked.reverse();
+  return picked;
 }
 
 export type WmsConfig = {

@@ -10,7 +10,6 @@ import { isSevereWeatherComing } from './weather';
 if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
-      shouldShowAlert: true,
       shouldPlaySound: true,
       shouldSetBadge: false,
       shouldShowBanner: true,
@@ -51,6 +50,13 @@ export async function ensureNotificationSetup(options?: { prompt?: boolean }): P
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 180, 80, 180],
       lightColor: '#5AA7FF',
+    });
+    await Notifications.setNotificationChannelAsync('severe', {
+      name: 'Severe Weather Alerts',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 120, 250, 120, 250],
+      lightColor: '#FF3B30',
+      bypassDnd: true,
     });
   }
   return granted;
@@ -132,14 +138,24 @@ export async function syncWeatherNotifications(
       const fresh = incoming.filter((alert) => !severeIds.includes(alert.id));
       if (fresh.length > 0) {
         const top = fresh[0];
+        const severeTrigger: Notifications.NotificationTriggerInput =
+          Platform.OS === 'android'
+            ? {
+                type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+                seconds: 1,
+                repeats: false,
+                channelId: 'severe',
+              }
+            : intervalTrigger(1);
         await Notifications.scheduleNotificationAsync({
           identifier: IDS.severe,
           content: {
             title: top.event,
             body: fresh.length > 1 ? `${top.headline} · +${fresh.length - 1} more` : top.headline,
             sound: true,
+            ...(Platform.OS === 'ios' ? { interruptionLevel: 'timeSensitive' } : {}),
           },
-          trigger: intervalTrigger(1),
+          trigger: severeTrigger,
         });
       }
       const activeIds = incoming.map((alert) => alert.id);
