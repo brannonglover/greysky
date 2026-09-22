@@ -2,7 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import React, { type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { colors } from '@/constants/theme';
+import { colors, scrim } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 
 type Props = {
@@ -22,6 +22,12 @@ export function SkyBackdrop({ children }: Props) {
         pointerEvents="none"
         style={StyleSheet.absoluteFill}
       />
+      <LinearGradient
+        colors={scrim.colors}
+        locations={scrim.locations}
+        pointerEvents="none"
+        style={styles.scrim}
+      />
       {children}
     </View>
   );
@@ -31,5 +37,12 @@ const styles = StyleSheet.create({
   fill: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  scrim: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '56%',
   },
 });

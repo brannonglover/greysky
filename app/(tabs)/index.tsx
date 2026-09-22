@@ -26,6 +26,7 @@ import { colors, fonts, pressed, radii, spacing } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { formatTemp } from '@/lib/units';
 import { RADAR_WET_INTENSITY, radarIntensityAt } from '@/lib/radarAtPoint';
+import { rainOutlook, rainVerdict } from '@/lib/rainOutlook';
 import { useRadarAtPoint } from '@/lib/useRadarAtPoint';
 import { shouldPromoteRadarMap } from '@/lib/weather';
 
@@ -184,6 +185,7 @@ export default function ForecastScreen() {
   }
 
   const today = weather.daily[0];
+  const outlook = rainOutlook(weather.hourly, weather.timezone);
   const shareMessage = `${placeName}: ${formatTemp(weather.current.temperature, settings.units)} · ${weather.nowcastSummary}`;
   const urgent = shouldPromoteRadarMap(weather);
   const map = <ForecastMap />;
@@ -207,6 +209,8 @@ export default function ForecastScreen() {
                 units={settings.units}
                 high={today?.temperatureMax}
                 low={today?.temperatureMin}
+                precipProbability={today?.precipitationProbabilityMax}
+                verdict={rainVerdict(outlook)}
               />
               <AlertBanner alerts={weather.alerts} />
               {urgent ? map : null}

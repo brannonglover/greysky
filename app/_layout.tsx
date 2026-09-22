@@ -77,6 +77,17 @@ export default function RootLayout() {
                 headerShadowVisible: false,
               }}
             />
+            <Stack.Screen
+              name="rain"
+              options={{
+                headerShown: true,
+                headerTitle: 'Rain',
+                headerTintColor: colors.text,
+                headerStyle: { backgroundColor: colors.bg },
+                headerTitleStyle: { fontFamily: fonts.display },
+                headerShadowVisible: false,
+              }}
+            />
           </Stack>
         </View>
       </ThemeProvider>

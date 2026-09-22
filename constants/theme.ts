@@ -156,3 +156,47 @@ export function tempColorFromC(celsius: number): string {
   if (pct < 0.5) return lerpHex('#4FC3E8', '#EEF2F8', pct / 0.5);
   return lerpHex('#EEF2F8', '#FF9166', (pct - 0.5) / 0.5);
 }
+
+/* ---------- Dial + rain system (hero redesign) ---------- */
+
+/** Geometry for the temperature dial. Angles are degrees, clockwise, 0 = +x. */
+export const dial = {
+  size: 320,
+  center: 160,
+  radiusOuter: 128,
+  radiusInner: 96,
+  strokeOuter: 18,
+  strokeInner: 8,
+  startAngle: 135,
+  sweep: 270,
+  track: 'rgba(255,255,255,0.13)',
+  trackInner: 'rgba(255,255,255,0.10)',
+  tick: 'rgba(255,255,255,0.28)',
+  marker: '#EEF2F8',
+  markerCore: 'rgba(6, 9, 17, 0.92)',
+  ghost: 'rgba(238, 242, 248, 0.75)',
+} as const;
+
+/**
+ * Sequential ramp for rain intensity, built off colors.precip so the dial, the
+ * hourly bars and the radar keep one colour language. Lighter reads as heavier
+ * against the dark sky.
+ */
+export const rainRamp = {
+  none: 'rgba(238, 242, 248, 0.14)',
+  drizzle: 'rgba(79, 195, 232, 0.45)',
+  light: '#4FC3E8',
+  moderate: '#7FD6EF',
+  heavy: '#B7E8F7',
+  storm: '#E2F5FC',
+} as const;
+
+/**
+ * Bottom scrim over the sky gradient. Without it, text sits on the bright
+ * horizon stop (e.g. #FFC98B on clear/day) well under 4.5:1.
+ */
+export const scrim = {
+  colors: ['rgba(6,9,17,0)', 'rgba(6,9,17,0.55)', 'rgba(6,9,17,0.92)'] as const,
+  locations: [0, 0.45, 1] as const,
+  heightRatio: 0.56,
+} as const;

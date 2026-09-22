@@ -29,3 +29,37 @@ export function barColorForCode(code: number): string {
   if (code === 0 || code === 1) return '#FFD60A';
   return '#C7C7CC';
 }
+
+export type RainBand = 'none' | 'drizzle' | 'light' | 'moderate' | 'heavy' | 'storm';
+
+/**
+ * mm/hr floors for the intensity meter. Mirrors intensityWord() in lib/nowcast.ts
+ * so the prose and the meter never disagree.
+ */
+export const RAIN_BANDS: readonly { band: RainBand; minMmHr: number; label: string }[] = [
+  { band: 'drizzle', minMmHr: 0, label: 'Drizzle' },
+  { band: 'light', minMmHr: 0.6, label: 'Light' },
+  { band: 'moderate', minMmHr: 2.5, label: 'Moderate' },
+  { band: 'heavy', minMmHr: 7.5, label: 'Heavy' },
+  { band: 'storm', minMmHr: 25, label: 'Storm' },
+];
+
+/** Below this a rate is a trace, not rain. Matches intensityFromMmHr()'s floor. */
+export const DRY_MM_HR = 0.02;
+
+export function bandFromMmHr(mmHr: number): RainBand {
+  if (!(mmHr > DRY_MM_HR)) return 'none';
+  let current: RainBand = 'drizzle';
+  for (const entry of RAIN_BANDS) {
+    if (mmHr >= entry.minMmHr) current = entry.band;
+  }
+  return current;
+}
+
+export function bandIndex(band: RainBand): number {
+  return RAIN_BANDS.findIndex((entry) => entry.band === band);
+}
+
+export function bandLabel(band: RainBand): string {
+  return RAIN_BANDS.find((entry) => entry.band === band)?.label ?? 'None';
+}
