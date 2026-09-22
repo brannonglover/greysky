@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 import { gridForRunMinute } from '../../lib/gridCache';
-import { renderNowcastTile } from '../../lib/nowcast';
+import { DEFAULT_SAMPLING, renderNowcastTile, type Sampling } from '../../lib/nowcast';
 import { renderBlendedTile, renderTile } from '../../lib/render';
 import {
   DEFAULT_BLEND_MODE,
@@ -24,9 +24,15 @@ function stringParam(value: unknown): string | null {
   return null;
 }
 
+function samplingParam(value: unknown): Sampling {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw === 'nearest' || raw === 'bilinear' ? raw : DEFAULT_SAMPLING;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(204).end();
+  const sampling = samplingParam(req.query.sampling);
 
   const z = intParam(req.query.z);
   const x = intParam(req.query.x);
@@ -103,6 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         x,
         y,
         mode,
+        sampling,
       );
       const renderMs = Date.now() - renderStart;
       const totalMs = Date.now() - t0;
@@ -119,6 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader('X-Radar-Tile', 'blend');
       res.setHeader('X-Radar-Weight', String(weight));
       res.setHeader('X-Radar-Blend-Mode', mode);
+      res.setHeader('X-Radar-Sampling', sampling);
       return res.status(200).send(png);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Transition tile render failed';
@@ -163,9 +171,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (Number.isNaN(Date.parse(obs))) return res.status(400).json({ error: 'obs is not a valid timestamp' });
     if (lead <= 0 || lead > 120) return res.status(400).json({ error: 'lead out of range' });
     try {
-      const png = await renderNowcastTile(obs, u, v, lead, z, x, y);
+      const png = await renderNowcastTile(obs, u, v, lead, z, x, y, sampling);
       res.setHeader('Content-Type', 'image/png');
       res.setHeader('Cache-Control', 'public, s-maxage=120, stale-while-revalidate=300');
+      res.setHeader('X-Radar-Tile', 'nowcast');
+      res.setHeader('X-Radar-Sampling', sampling);
       return res.status(200).send(png);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nowcast tile render failed';

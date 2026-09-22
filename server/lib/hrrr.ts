@@ -45,15 +45,64 @@ async function exists(url: string): Promise<boolean> {
   return res.ok;
 }
 
-/** Newest run that has actually been published, probing backwards hour by hour. */
-export async function latestRun(now = new Date()): Promise<Date> {
+/** Forecast minutes covered by one wrfsubh file. */
+const MINUTES_PER_FILE = STEP_MIN * STEPS_PER_FILE;
+
+/**
+ * Highest wrfsubh file index needed to reach `horizonMin` past now, for a run
+ * that is already `runAgeMin` old. A run publishes roughly an hour late, so the
+ * useful forecast minutes are offset by the run's age, not counted from zero.
+ */
+export function requiredFileIndex(runAgeMin: number, horizonMin: number): number {
+  return Math.max(1, Math.ceil((runAgeMin + horizonMin) / MINUTES_PER_FILE));
+}
+
+/** Injectable so the publication-window behaviour can be tested offline. */
+export type FileProbe = (run: Date, fileIndex: number) => Promise<boolean>;
+
+const probeFile: FileProbe = (run, fileIndex) => exists(`${fileUrl(run, fileIndex)}.idx`);
+
+/**
+ * Newest run that can actually serve the requested horizon.
+ *
+ * NCEP writes the sub-hourly files progressively, so for several minutes each
+ * hour a run exists (wrfsubhf01 is there) but only covers forecast minutes
+ * 15-60 — which, for a run already ~55 minutes old, is barely ahead of now.
+ * Selecting on "f01 exists" alone therefore produced a run that could not
+ * reach the blend window, the forecast samples vanished, and the timeline
+ * silently collapsed to nowcast-only and truncated early.
+ *
+ * So a run is only chosen if the file covering the far end of the horizon is
+ * published too. Otherwise we step back an hour: an older run has diverged
+ * further from reality, but complete coverage beats losing the forecast.
+ */
+export async function selectRun(
+  now = new Date(),
+  horizonMin = 0,
+  probe: FileProbe = probeFile,
+): Promise<Date> {
   const start = new Date(now.getTime() - PUBLISH_LAG_MIN * 60_000);
   start.setUTCMinutes(0, 0, 0);
+
+  let partial: Date | null = null;
   for (let i = 0; i < MAX_RUN_PROBES; i++) {
     const candidate = new Date(start.getTime() - i * 3_600_000);
-    if (await exists(`${fileUrl(candidate, 1)}.idx`)) return candidate;
+    if (!(await probe(candidate, 1))) continue;
+
+    const ageMin = (now.getTime() - candidate.getTime()) / 60_000;
+    if (await probe(candidate, requiredFileIndex(ageMin, horizonMin))) return candidate;
+
+    // Published but still filling in. Remember it in case nothing is complete.
+    if (!partial) partial = candidate;
   }
+
+  if (partial) return partial;
   throw new Error('No published HRRR run found');
+}
+
+/** Newest published run, without regard to horizon. */
+export async function latestRun(now = new Date()): Promise<Date> {
+  return selectRun(now, 0);
 }
 
 type IndexEntry = { offset: number; length?: number };
@@ -79,7 +128,7 @@ async function refcIndex(url: string): Promise<Map<number, IndexEntry>> {
  * wrfsubh files, so we resolve each file's index independently.
  */
 export async function forecastFrames(horizonMin = 60, now = new Date()): Promise<ForecastFrame[]> {
-  const run = await latestRun(now);
+  const run = await selectRun(now, horizonMin);
   const runMs = run.getTime();
   const nowMs = now.getTime();
 

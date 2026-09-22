@@ -38,6 +38,37 @@ export const DEFAULT_TRANSITION: TransitionConfig = {
 };
 
 /**
+ * Why there is no early-HRRR contribution before `nowcastOnlyUntilMin`.
+ *
+ * The first 15 minutes are rigid translation — advection moves precipitation
+ * but cannot grow or decay it — so the animation slides and only begins to
+ * evolve once HRRR enters. Introducing a small HRRR weight earlier was tested
+ * directly and rejected, over four regions at z7:
+ *
+ *   weight at +5   evolution at +6m   echo delta   >=35 cores (Carolina)
+ *   0% (shipped)              1.2%            -                      145
+ *   3%                        3.4%     +0.07 pp                      134
+ *   10%                       3.1%     +0.21 pp                      165
+ *   20%                       5.1%     +0.35 pp                      247
+ *
+ * At 3% nothing measurable changes; echo footprint moves by under 0.15 of a
+ * percentage point and the evolution difference is inside the noise. Only at
+ * ~20% does the animation visibly evolve, and by then HRRR is inserting cells
+ * and cores the radar does not see at +3 minutes — Carolina's strong-core
+ * count rises 70% while N Georgia's falls 32%.
+ *
+ * There is no weight in between that works, and that is structural rather
+ * than a tuning failure: rain-rate interpolation is deliberately dominated by
+ * the stronger source, which is exactly what removed the intensity washout.
+ * The response is sharply nonlinear, so small weights do nothing and useful
+ * weights overwrite a four-minute-old observation with a model initialised one
+ * to two hours earlier.
+ *
+ * Making the earliest frames genuinely evolve needs a nowcast that models
+ * growth and decay, not a heavier blend. See docs/radar.md.
+ */
+
+/**
  * Weight on the forecast provider at a given lead, 0 = pure nowcast,
  * 1 = pure forecast.
  */

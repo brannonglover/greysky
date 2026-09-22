@@ -1,7 +1,7 @@
 import { PNG } from 'pngjs';
 
 import type { Grid } from './hrrr';
-import { nowcastDbzAt, sourceFor, tileBounds } from './nowcast';
+import { DEFAULT_SAMPLING, nowcastDbzAt, sourceFor, tileBounds, type Sampling } from './nowcast';
 import { colorForDbz } from './palette';
 import { dbzToRainRate, dbzToZ, rainRateToDbz, zToDbz } from './reflectivity';
 import { gridSampler } from './render';
@@ -116,6 +116,7 @@ export async function renderTransitionTile(
   x: number,
   y: number,
   mode: BlendMode = DEFAULT_BLEND_MODE,
+  sampling: Sampling = DEFAULT_SAMPLING,
 ): Promise<Buffer> {
   const source = await sourceFor(nowcast.isoTime);
   const bbox = tileBounds(z, x, y);
@@ -148,7 +149,7 @@ export async function renderTransitionTile(
 
     for (let px = 0; px < TILE_SIZE; px += 1) {
       // Nowcast: null = outside the source image, 0 = covered but no echo.
-      const n = nowcastDbzAt(source, mxs[px] - dx, my - dy);
+      const n = nowcastDbzAt(source, mxs[px] - dx, my - dy, sampling);
 
       // HRRR: null = outside the model grid. Inside, the model encodes "no
       // echo" as a large negative number, which is a real measurement of no

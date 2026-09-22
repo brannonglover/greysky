@@ -1,7 +1,7 @@
 import { PNG } from 'pngjs';
 
 import { WMS_BASE, LAYER, type ObservedFrame } from './mrms';
-import { dbzForColor } from './palette';
+import { colorForDbz, dbzForColor } from './palette';
 
 const ORIGIN = 20037508.342789244;
 const TILE_SIZE = 256;
@@ -267,20 +267,66 @@ function sample(source: SourceImage, mx: number, my: number): [number, number, n
  * rendered PNG carries no way to tell them apart; recovering that distinction
  * would need the MRMS GRIB2 itself.
  */
-export function nowcastDbzAt(source: SourceImage, mx: number, my: number): number | null {
+export type Sampling = 'nearest' | 'bilinear';
+
+export const DEFAULT_SAMPLING: Sampling = 'bilinear';
+
+/** Reflectivity of one source pixel; 0 where nothing is drawn. */
+function dbzAtPixel(png: SourceImage['png'], px: number, py: number): number {
+  const o = (py * png.width + px) * 4;
+  const alpha = png.data[o + 3];
+  if (alpha < 16) return 0;
+  // Off-palette pixels are antialiased echo edges, not missing data.
+  return dbzForColor(png.data[o], png.data[o + 1], png.data[o + 2], alpha) ?? 0;
+}
+
+export function nowcastDbzAt(
+  source: SourceImage,
+  mx: number,
+  my: number,
+  sampling: Sampling = DEFAULT_SAMPLING,
+): number | null {
   const { png, minx, miny, maxx, maxy } = source;
   const u = (mx - minx) / (maxx - minx);
   const v = (maxy - my) / (maxy - miny);
   if (u < 0 || u > 1 || v < 0 || v > 1) return null;
 
-  const px = Math.min(png.width - 1, Math.max(0, Math.round(u * (png.width - 1))));
-  const py = Math.min(png.height - 1, Math.max(0, Math.round(v * (png.height - 1))));
-  const o = (py * png.width + px) * 4;
-  const alpha = png.data[o + 3];
-  if (alpha < 16) return 0;
+  const fx = u * (png.width - 1);
+  const fy = v * (png.height - 1);
 
-  // Off-palette pixels are antialiased echo edges, not missing data.
-  return dbzForColor(png.data[o], png.data[o + 1], png.data[o + 2], alpha) ?? 0;
+  if (sampling === 'nearest') {
+    const px = Math.min(png.width - 1, Math.max(0, Math.round(fx)));
+    const py = Math.min(png.height - 1, Math.max(0, Math.round(fy)));
+    return dbzAtPixel(png, px, py);
+  }
+
+  /*
+   * Bilinear, and deliberately on dBZ rather than on colour.
+   *
+   * Advection shifts the field by well under a pixel per frame at typical
+   * zooms (~0.5 px at z6), and nearest-neighbour rounding makes edge pixels
+   * flip between neighbouring samples from frame to frame — precipitation
+   * shimmers instead of translating. Interpolating moves it continuously.
+   *
+   * Interpolating the rendered RGBA instead would land between palette
+   * entries and invent reflectivities the ramp never meant, so the four
+   * neighbours are converted to dBZ first.
+   */
+  const x0 = Math.min(png.width - 1, Math.max(0, Math.floor(fx)));
+  const y0 = Math.min(png.height - 1, Math.max(0, Math.floor(fy)));
+  const x1 = Math.min(png.width - 1, x0 + 1);
+  const y1 = Math.min(png.height - 1, y0 + 1);
+  const tx = fx - x0;
+  const ty = fy - y0;
+
+  const d00 = dbzAtPixel(png, x0, y0);
+  const d10 = dbzAtPixel(png, x1, y0);
+  const d01 = dbzAtPixel(png, x0, y1);
+  const d11 = dbzAtPixel(png, x1, y1);
+
+  const top = d00 + (d10 - d00) * tx;
+  const bottom = d01 + (d11 - d01) * tx;
+  return top + (bottom - top) * ty;
 }
 
 export async function renderNowcastTile(
@@ -291,6 +337,7 @@ export async function renderNowcastTile(
   z: number,
   x: number,
   y: number,
+  sampling: Sampling = DEFAULT_SAMPLING,
 ): Promise<Buffer> {
   const source = await sourceFor(isoTime);
   const bbox = tileBounds(z, x, y);
@@ -304,7 +351,9 @@ export async function renderNowcastTile(
     const my = bbox.maxy - ((py + 0.5) / TILE_SIZE) * spanY;
     for (let px = 0; px < TILE_SIZE; px += 1) {
       const mx = bbox.minx + ((px + 0.5) / TILE_SIZE) * spanX;
-      const color = sample(source, mx - dx, my - dy);
+      const dbz = nowcastDbzAt(source, mx - dx, my - dy, sampling);
+      if (dbz === null) continue;
+      const color = colorForDbz(dbz);
       if (!color) continue;
       const o = (py * TILE_SIZE + px) * 4;
       png.data[o] = color[0];
