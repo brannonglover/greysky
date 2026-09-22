@@ -1,5 +1,6 @@
 import { intensityFromMmHr } from '@/lib/precip';
-import { RADAR_API } from '@/lib/weather';
+import { RADAR_API } from '@/lib/radar/api';
+import { dbzToRainRate } from '@/lib/radar/reflectivity';
 
 export type RadarSample = {
   time: number;
@@ -11,11 +12,11 @@ type PointResponse = {
   samples?: Array<{ time: number; kind: 'observed' | 'forecast'; dbz: number | null }>;
 };
 
-/** Marshall-Palmer Z-R relation, the same conversion the hourly chart assumes. */
+/** Below this the return is noise rather than measurable rain. */
+const MIN_RAIN_DBZ = 10;
+
 function dbzToMmHr(dbz: number): number {
-  if (dbz < 10) return 0;
-  const z = 10 ** (dbz / 10);
-  return (z / 200) ** (1 / 1.6);
+  return dbz < MIN_RAIN_DBZ ? 0 : dbzToRainRate(dbz);
 }
 
 /**

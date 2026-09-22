@@ -27,6 +27,26 @@ function tileToLat(y: number, z: number): number {
   return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
 }
 
+/**
+ * A reusable nearest-cell sampler for one grid. Builds the projection once,
+ * which matters because tiles sample it 65,536 times.
+ *
+ * Returns null for coordinates OUTSIDE the grid — that is "no data", which
+ * callers must not confuse with an in-grid value below the reflectivity floor
+ * ("no precipitation").
+ */
+export function gridSampler(grid: Grid): (latitude: number, longitude: number) => number | null {
+  const toGrid = proj4(WGS84, normalizeProj(grid.proj));
+  const origin = toGrid.forward([grid.lon0, grid.lat0]);
+  return (latitude, longitude) => {
+    const [gx, gy] = toGrid.forward([longitude, latitude]);
+    const i = Math.round((gx - origin[0]) / DX);
+    const j = Math.round((gy - origin[1]) / DX);
+    if (i < 0 || i >= grid.cols || j < 0 || j >= grid.rows) return null;
+    return grid.values[j * grid.cols + i];
+  };
+}
+
 /** Nearest-cell reflectivity at a coordinate, or null when outside the grid. */
 export function sampleGridAt(grid: Grid, latitude: number, longitude: number): number | null {
   const toGrid = proj4(WGS84, normalizeProj(grid.proj));

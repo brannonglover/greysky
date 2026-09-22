@@ -73,6 +73,7 @@ module.exports = {
     },
     plugins: [
       'expo-router',
+      '@maplibre/maplibre-react-native',
       [
         'expo-location',
         {

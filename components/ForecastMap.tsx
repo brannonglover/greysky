@@ -1,53 +1,48 @@
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { DarkSkyRadar } from '@/components/DarkSkyRadar';
+import { RadarMap } from '@/components/RadarMap';
 import { colors, glass, pressed } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
-import { useOnAppResume } from '@/lib/useOnAppResume';
-import { fetchRadarManifest, type RadarFrame } from '@/lib/weather';
+import { Playhead } from '@/lib/radar/playhead';
+import { useRadarManifest } from '@/lib/radar/useRadar';
 
 export function ForecastMap() {
   const router = useRouter();
   const { coords } = useApp();
-  const [frames, setFrames] = useState<RadarFrame[]>([]);
+  const { manifest } = useRadarManifest();
 
-  const load = useCallback(() => {
-    fetchRadarManifest()
-      .then((manifest) => {
-        // The preview is a still, so show the most recent actual observation.
-        const current =
-          [...manifest.frames].reverse().find((frame) => frame.kind === 'observed') ??
-          manifest.frames.at(-1);
-        setFrames(current ? [current] : []);
-      })
-      .catch(() => {});
-  }, []);
+  // A still, not an animation: show the newest real observation. The playhead
+  // exists only to satisfy the map's contract and never moves.
+  const playhead = useMemo(() => new Playhead(), []);
+  const frames = useMemo(() => {
+    const latest =
+      manifest?.frames.findLast((frame) => frame.kind === 'observed') ??
+      manifest?.frames.at(-1);
+    return latest ? [latest] : [];
+  }, [manifest]);
 
   useEffect(() => {
-    load();
-    // Slower than the radar tab; this is a thumbnail, not an animation.
-    const timer = setInterval(load, 5 * 60_000);
-    return () => clearInterval(timer);
-  }, [load]);
-
-  useOnAppResume(load);
+    playhead.setCount(frames.length);
+  }, [frames.length, playhead]);
 
   if (!coords) return null;
 
   return (
     <Pressable
       onPress={() => router.push('/(tabs)/radar')}
+      accessibilityRole="button"
+      accessibilityLabel="Open radar"
       style={({ pressed: isPressed }) => [styles.card, isPressed && pressed]}>
       <View style={styles.map} pointerEvents="none">
-        <DarkSkyRadar
+        <RadarMap
           latitude={coords.latitude}
           longitude={coords.longitude}
           zoom={7}
           frames={frames}
-          playing={false}
-          scrollEnabled={false}
+          playhead={playhead}
+          interactive={false}
         />
       </View>
     </Pressable>

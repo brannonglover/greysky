@@ -3,17 +3,26 @@ import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 
 import { colors, fonts } from '@/constants/theme';
-import { radarWindow } from '@/lib/weather';
-
-type Frame = {
-  time: number;
-};
+import type { Playhead } from '@/lib/radar/playhead';
+import { isFutureKind, radarWindow, type RadarFrame } from '@/lib/radar/types';
+import { usePlayheadIndex } from '@/lib/radar/useRadar';
 
 type Props = {
-  frames: Frame[];
-  index: number;
-  onSeek: (index: number) => void;
+  frames: RadarFrame[];
+  /**
+   * The timeline subscribes to the playhead directly instead of taking an
+   * index prop, so scrubbing and playback never re-render the screen above it.
+   */
+  playhead: Playhead;
   window?: { pastMin: number; futureMin: number };
+  /** Newest real observation; the observed/future boundary is anchored here. */
+  observedThrough?: number | null;
+  /**
+   * Called when the user grabs the track. Taking hold of the timeline means
+   * taking control of it, so the screen stops playback — otherwise the
+   * animation timer advances straight past wherever they just seeked.
+   */
+  onScrub?: () => void;
 };
 
 const styles = StyleSheet.create({
@@ -60,6 +69,24 @@ const styles = StyleSheet.create({
   },
   tickFilled: {
     backgroundColor: colors.precip,
+  },
+  /** Model output reads lighter than a measurement. */
+  tickFuture: {
+    backgroundColor: 'transparent',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.45)',
+  },
+  /**
+   * The last real observation, which typically trails wall-clock now by a
+   * couple of minutes. Drawn separately from the Now line so the gap is
+   * visible rather than papered over.
+   */
+  boundary: {
+    position: 'absolute',
+    top: 0,
+    width: StyleSheet.hairlineWidth,
+    height: 12,
+    backgroundColor: 'rgba(255,255,255,0.35)',
   },
   thumb: {
     position: 'absolute',
@@ -125,15 +152,23 @@ function pctForTime(time: number, start: number, end: number): number {
   return Math.max(0, Math.min(100, ((time - start) / span) * 100));
 }
 
-function indexFromX(x: number, width: number, frames: Frame[], start: number, end: number): number {
+function indexFromX(x: number, width: number, frames: RadarFrame[], start: number, end: number): number {
   if (frames.length === 0 || width <= 0) return 0;
   const t = start + Math.max(0, Math.min(1, x / width)) * (end - start);
   return frames.reduce((best, frame, i) => {
-    return Math.abs(frame.time - t) < Math.abs(frames[best].time - t) ? i : best;
+    return Math.abs(frame.timestamp - t) < Math.abs(frames[best].timestamp - t) ? i : best;
   }, 0);
 }
 
-export function RadarTimeline({ frames, index, onSeek, window }: Props) {
+export function RadarTimeline({
+  frames,
+  playhead,
+  window,
+  observedThrough,
+  onScrub,
+}: Props) {
+  const index = usePlayheadIndex(playhead);
+  const onSeek = (next: number) => playhead.set(next);
   const widthRef = useRef(1);
   const originX = useRef(0);
   const lastIndex = useRef(index);
@@ -152,9 +187,10 @@ export function RadarTimeline({ frames, index, onSeek, window }: Props) {
   const nowSec = Date.now() / 1000;
   const { start, end } = radarWindow(window, nowSec);
   const current = frames[index];
-  const thumbPct = current ? pctForTime(current.time, start, end) : 0;
+  const boundary = observedThrough ?? nowSec;
+  const thumbPct = current ? pctForTime(current.timestamp, start, end) : 0;
   const nowPct = pctForTime(nowSec, start, end);
-  const playedPct = current ? pctForTime(current.time, start, end) : 0;
+  const playedPct = current ? pctForTime(current.timestamp, start, end) : 0;
 
   const seekToX = (x: number, always = false) => {
     const next = indexFromX(x, widthRef.current, frames, start, end);
@@ -177,6 +213,7 @@ export function RadarTimeline({ frames, index, onSeek, window }: Props) {
         onStartShouldSetResponder={() => frames.length > 1}
         onMoveShouldSetResponder={() => frames.length > 1}
         onResponderGrant={(event) => {
+          onScrub?.();
           originX.current = event.nativeEvent.pageX - event.nativeEvent.locationX;
           seekToX(event.nativeEvent.locationX, true);
         }}
@@ -185,6 +222,7 @@ export function RadarTimeline({ frames, index, onSeek, window }: Props) {
         accessibilityLabel={`Radar time, from ${edgeLabel(pastMin)} ago to ${edgeLabel(futureMin)} ahead`}
         accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
         onAccessibilityAction={(event) => {
+          onScrub?.();
           if (event.nativeEvent.actionName === 'increment') {
             onSeek(Math.min(frames.length - 1, index + 1));
           } else if (event.nativeEvent.actionName === 'decrement') {
@@ -195,20 +233,22 @@ export function RadarTimeline({ frames, index, onSeek, window }: Props) {
           <View style={styles.rail} />
           <View style={[styles.railPlayed, { width: `${playedPct}%` }]} />
           {frames.map((item, i) =>
-            inWindow(item.time, start, end) ? (
+            inWindow(item.timestamp, start, end) ? (
               <View
-                key={item.time}
+                key={item.id}
                 style={[
                   styles.tick,
-                  { left: `${pctForTime(item.time, start, end)}%` },
+                  { left: `${pctForTime(item.timestamp, start, end)}%` },
+                  isFutureKind(item.kind) && styles.tickFuture,
                   i <= index && styles.tickFilled,
                 ]}
               />
             ) : null,
           )}
+          <View style={[styles.boundary, { left: `${pctForTime(boundary, start, end)}%` }]} />
           <View style={[styles.nowLine, { left: `${nowPct}%` }]} />
         </View>
-        {current && inWindow(current.time, start, end) ? (
+        {current && inWindow(current.timestamp, start, end) ? (
           <View pointerEvents="none" style={[styles.thumb, { left: `${thumbPct}%` }]} />
         ) : null}
       </View>

@@ -1,6 +1,7 @@
 import { PNG } from 'pngjs';
 
 import { WMS_BASE, LAYER, type ObservedFrame } from './mrms';
+import { dbzForColor } from './palette';
 
 const ORIGIN = 20037508.342789244;
 const TILE_SIZE = 256;
@@ -13,8 +14,18 @@ const CONUS = {
 };
 const SOURCE_W = 1600;
 const SOURCE_H = 800;
-const MOTION_W = 320;
-const MOTION_H = 160;
+/**
+ * Motion is estimated on this grid. It must be fine enough that the echo
+ * actually moves more than a pixel over MOTION_LOOKBACK_MIN, or the integer
+ * shift search resolves nothing and reports zero motion.
+ *
+ * At 320x160 a CONUS pixel is ~20 km, so 40 minutes of a typical 20-50 km/h
+ * storm is well under one pixel and the nowcast silently froze into a static
+ * copy of the last observation. At 640x320 (~10 km/px) the same motion spans
+ * 1-3 px and is recoverable.
+ */
+const MOTION_W = 640;
+const MOTION_H = 320;
 const STEP_MIN = 5;
 const MOTION_LOOKBACK_MIN = 40;
 
@@ -28,7 +39,7 @@ export type NowcastFrame = {
   v: number;
 };
 
-type SourceImage = {
+export type SourceImage = {
   png: PNG;
   minx: number;
   miny: number;
@@ -47,7 +58,7 @@ function latToMerc(lat: number): number {
   return (y * ORIGIN) / 180;
 }
 
-function tileBounds(z: number, x: number, y: number): { minx: number; miny: number; maxx: number; maxy: number } {
+export function tileBounds(z: number, x: number, y: number): { minx: number; miny: number; maxx: number; maxy: number } {
   const n = 2 ** z;
   const size = (2 * ORIGIN) / n;
   return {
@@ -81,7 +92,7 @@ async function getMap(isoTime: string, bbox: { minx: number; miny: number; maxx:
   return PNG.sync.read(buf);
 }
 
-function sourceFor(isoTime: string): Promise<SourceImage> {
+export function sourceFor(isoTime: string): Promise<SourceImage> {
   const hit = sources.get(isoTime);
   if (hit) return hit;
   const pending = getMap(isoTime, CONUS, SOURCE_W, SOURCE_H)
@@ -130,6 +141,56 @@ function overlap(a: Uint8Array, b: Uint8Array, width: number, height: number, dx
   return union === 0 ? 0 : hit / union;
 }
 
+/** Scaled with the grid so the search covers the same ground distance. */
+export const MOTION_MAX_SHIFT = 16;
+
+/** The grid motion is estimated on. Exported so tests pin the real values. */
+export const MOTION_GRID = { width: MOTION_W, height: MOTION_H };
+
+/** Metres per pixel of the motion grid, for converting a shift to a velocity. */
+export function motionPixelSize(width: number, height: number): { x: number; y: number } {
+  return {
+    x: (CONUS.maxx - CONUS.minx) / width,
+    y: (CONUS.maxy - CONUS.miny) / height,
+  };
+}
+
+/**
+ * Integer shift that best aligns two echo masks.
+ *
+ * Pure and exported so the regression test can drive it with synthetic storms
+ * instead of the network.
+ */
+export function estimateShift(
+  before: Uint8Array,
+  after: Uint8Array,
+  width: number,
+  height: number,
+  maxShift: number = MOTION_MAX_SHIFT,
+): { dx: number; dy: number; score: number } {
+  let best = { dx: 0, dy: 0, score: overlap(before, after, width, height, 0, 0) };
+  for (let dy = -maxShift; dy <= maxShift; dy += 1) {
+    for (let dx = -maxShift; dx <= maxShift; dx += 1) {
+      if (dx === 0 && dy === 0) continue;
+      const score = overlap(before, after, width, height, dx, dy);
+      if (score > best.score) best = { dx, dy, score };
+    }
+  }
+  return best;
+}
+
+/** +dx is east in the image; +dy is south, so northward v flips. */
+export function shiftToMotion(
+  dx: number,
+  dy: number,
+  width: number,
+  height: number,
+  dtMin: number,
+): { u: number; v: number } {
+  const px = motionPixelSize(width, height);
+  return { u: (dx * px.x) / dtMin, v: (-dy * px.y) / dtMin };
+}
+
 async function estimateMotion(earlier: string, later: string): Promise<{ u: number; v: number }> {
   const [a, b] = await Promise.all([
     getMap(earlier, CONUS, MOTION_W, MOTION_H),
@@ -137,21 +198,11 @@ async function estimateMotion(earlier: string, later: string): Promise<{ u: numb
   ]);
   const before = wetMask(a, MOTION_W, MOTION_H);
   const after = wetMask(b, MOTION_W, MOTION_H);
-  let best = { dx: 0, dy: 0, score: overlap(before, after, MOTION_W, MOTION_H, 0, 0) };
-  const max = 8;
-  for (let dy = -max; dy <= max; dy += 1) {
-    for (let dx = -max; dx <= max; dx += 1) {
-      if (dx === 0 && dy === 0) continue;
-      const score = overlap(before, after, MOTION_W, MOTION_H, dx, dy);
-      if (score > best.score) best = { dx, dy, score };
-    }
-  }
+  const best = estimateShift(before, after, MOTION_W, MOTION_H);
+
   const dtMin = (Date.parse(later) - Date.parse(earlier)) / 60_000;
   if (!Number.isFinite(dtMin) || dtMin < 4) return { u: 0, v: 0 };
-  const metersPerPxX = (CONUS.maxx - CONUS.minx) / MOTION_W;
-  const metersPerPxY = (CONUS.maxy - CONUS.miny) / MOTION_H;
-  // +dx is east in the image; +dy is south, so northward v flips.
-  return { u: (best.dx * metersPerPxX) / dtMin, v: (-best.dy * metersPerPxY) / dtMin };
+  return shiftToMotion(best.dx, best.dy, MOTION_W, MOTION_H, dtMin);
 }
 
 /**
@@ -198,6 +249,38 @@ function sample(source: SourceImage, mx: number, my: number): [number, number, n
   const o = (py * png.width + px) * 4;
   if (png.data[o + 3] < 16) return null;
   return [png.data[o], png.data[o + 1], png.data[o + 2], png.data[o + 3]];
+}
+
+/**
+ * Reflectivity of the advected MRMS field at a Web Mercator point.
+ *
+ * Tri-state on purpose:
+ *   null -> outside the cached CONUS image: NO DATA
+ *   0    -> inside the image, nothing drawn: no precipitation
+ *   >0   -> measured reflectivity, recovered through the palette
+ *
+ * Blending must keep those apart. Treating "no data" as 0 dBZ would quietly
+ * halve real echoes wherever only one source covers the pixel.
+ *
+ * Caveat: inside the CONUS box a transparent pixel means "nothing rendered",
+ * which conflates genuine no-precipitation with gaps in radar coverage. The
+ * rendered PNG carries no way to tell them apart; recovering that distinction
+ * would need the MRMS GRIB2 itself.
+ */
+export function nowcastDbzAt(source: SourceImage, mx: number, my: number): number | null {
+  const { png, minx, miny, maxx, maxy } = source;
+  const u = (mx - minx) / (maxx - minx);
+  const v = (maxy - my) / (maxy - miny);
+  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+
+  const px = Math.min(png.width - 1, Math.max(0, Math.round(u * (png.width - 1))));
+  const py = Math.min(png.height - 1, Math.max(0, Math.round(v * (png.height - 1))));
+  const o = (py * png.width + px) * 4;
+  const alpha = png.data[o + 3];
+  if (alpha < 16) return 0;
+
+  // Off-palette pixels are antialiased echo edges, not missing data.
+  return dbzForColor(png.data[o], png.data[o + 1], png.data[o + 2], alpha) ?? 0;
 }
 
 export async function renderNowcastTile(

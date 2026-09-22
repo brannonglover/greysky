@@ -6,7 +6,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts",
-    "preview": "tsx scripts/radar-preview.ts"
+    "preview": "tsx scripts/radar-preview.ts",
+    "verify": "tsx scripts/verify-phase1.ts",
+    "test": "tsx scripts/motion.test.ts"
   },
   "license": "ISC",
   "type": "commonjs",
