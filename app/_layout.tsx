@@ -82,6 +82,7 @@ export default function RootLayout() {
               options={{
                 headerShown: true,
                 headerTitle: 'Rain',
+                headerBackTitle: 'Forecast',
                 headerTintColor: colors.text,
                 headerStyle: { backgroundColor: colors.bg },
                 headerTitleStyle: { fontFamily: fonts.display },
