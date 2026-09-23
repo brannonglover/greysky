@@ -4,19 +4,30 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { syncBackgroundWeatherTask } from '@/lib/backgroundWeather';
 import { skyFromWeather, type SkyPalette } from '@/lib/sky';
 import type { SavedLocation, Settings, WeatherBundle } from '@/lib/types';
-import { alertsEnabled, ensureNotificationSetup, syncWeatherNotifications } from '@/lib/notifications';
+import {
+  alertsEnabled,
+  ensureNotificationSetup,
+  syncOutlookNotifications,
+  syncTropicalNotifications,
+  syncWeatherNotifications,
+} from '@/lib/notifications';
+import { fetchRegionalAlerts, type RegionalAlert } from '@/lib/regional';
+import { fetchSpcOutlook, type DayOutlook } from '@/lib/spc';
 import {
   defaultSettings,
   loadSavedLocations,
   loadSelectedLocationId,
   loadSettings,
+  loadTropicalCache,
   loadWeatherCache,
   saveLastPlace,
   saveSavedLocations,
   saveSelectedLocationId,
   saveSettings,
+  saveTropicalCache,
   saveWeatherCache,
 } from '@/lib/storage';
+import { fetchTropicalReports, type TropicalReport } from '@/lib/tropical';
 import { useOnAppResume } from '@/lib/useOnAppResume';
 import { fetchAlerts, fetchForecast } from '@/lib/weather';
 
@@ -36,6 +47,15 @@ type AppState = {
   lastUpdated: Date | null;
   coords: { latitude: number; longitude: number } | null;
   sky: SkyPalette;
+  /** Active tropical cyclones with this location's exposure resolved. */
+  tropical: TropicalReport[];
+  tropicalLoading: boolean;
+  refreshTropical: () => Promise<void>;
+  /** SPC severe-weather outlooks covering this location, 1–3 days out. */
+  outlooks: DayOutlook[];
+  /** Significant alerts around the region. Awareness only — never notified. */
+  regional: RegionalAlert[];
+  refreshAwareness: () => Promise<void>;
   refresh: (force?: boolean) => Promise<void>;
   requestPermission: () => Promise<void>;
   updateSettings: (patch: Partial<Settings> | ((prev: Settings) => Settings)) => Promise<void>;
@@ -51,6 +71,10 @@ const AppContext = createContext<AppState | null>(null);
 const AUTO_REFRESH_MS = 10 * 60_000;
 /** Returning to the app only re-locates if the data has had time to drift. */
 const RESUME_STALE_MS = 2 * 60_000;
+/** NHC issues advisories every six hours, so polling harder buys nothing. */
+const TROPICAL_REFRESH_MS = 30 * 60_000;
+/** SPC reissues day 1 five times a day; regional alerts move faster. */
+const AWARENESS_REFRESH_MS = 10 * 60_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -96,6 +120,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [permission, setPermission] = useState<PermissionState>(Location.PermissionStatus.UNDETERMINED);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [tropical, setTropical] = useState<TropicalReport[]>([]);
+  const [tropicalLoading, setTropicalLoading] = useState(false);
+  const [outlooks, setOutlooks] = useState<DayOutlook[]>([]);
+  const [regional, setRegional] = useState<RegionalAlert[]>([]);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
@@ -190,8 +218,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Snapshot of everything the automatic refreshes read, so the timer and the
   // resume handler can stay mounted once instead of tearing down on every
   // state change.
-  const live = useRef({ loading, refreshing, coords, placeName, placeSubtitle, selectedId, lastUpdated, refresh });
-  live.current = { loading, refreshing, coords, placeName, placeSubtitle, selectedId, lastUpdated, refresh };
+  const live = useRef({
+    loading, refreshing, coords, placeName, placeSubtitle, selectedId, lastUpdated, refresh,
+    alertIds: [] as string[],
+  });
+  live.current = {
+    loading, refreshing, coords, placeName, placeSubtitle, selectedId, lastUpdated, refresh,
+    // So the regional sweep can drop anything already shown as affecting the user.
+    alertIds: weather?.alerts.map((alert) => alert.id) ?? [],
+  };
 
   const autoRefresh = useCallback(
     async (maxAgeMs: number, relocate: boolean) => {
@@ -245,6 +280,102 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [autoRefresh]);
 
   useOnAppResume(() => void autoRefresh(RESUME_STALE_MS, true));
+
+  // Tropical systems are fetched on their own schedule rather than inside
+  // loadWeatherAt. NHC advisories move on a six-hourly cycle, and a slow
+  // response must never hold up the forecast the whole app is built around.
+  const tropicalRequest = useRef(0);
+
+  const refreshTropical = useCallback(async () => {
+    const point = live.current.coords;
+    if (!point) return;
+    const id = ++tropicalRequest.current;
+    setTropicalLoading(true);
+    try {
+      const reports = await fetchTropicalReports(point.latitude, point.longitude);
+      if (id !== tropicalRequest.current) return;
+      setTropical(reports);
+      await saveTropicalCache({
+        reports,
+        latitude: point.latitude,
+        longitude: point.longitude,
+        timestamp: Date.now(),
+      });
+      const currentSettings = settingsRef.current;
+      await syncTropicalNotifications(reports, currentSettings.alerts, live.current.placeName);
+    } catch {
+      // The Storms tab falls back to alerts and forecast signals.
+    } finally {
+      if (id === tropicalRequest.current) setTropicalLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!coords) return;
+    let cancelled = false;
+
+    // Show the cached copy first so the tab has content the moment it opens,
+    // but only when it was taken near enough that its exposure maths still holds.
+    void (async () => {
+      const cached = await loadTropicalCache();
+      if (cancelled || !cached) return;
+      const moved =
+        Math.abs(cached.latitude - coords.latitude) > 1 ||
+        Math.abs(cached.longitude - coords.longitude) > 1;
+      if (!moved && Date.now() - cached.timestamp < 6 * 60 * 60_000) {
+        setTropical(cached.reports);
+      }
+    })();
+
+    void refreshTropical();
+    const timer = setInterval(() => void refreshTropical(), TROPICAL_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [coords, refreshTropical]);
+
+  useOnAppResume(() => void refreshTropical());
+
+  // SPC outlooks and the regional sweep ride alongside the tropical fetch —
+  // independent of the forecast, and independent of each other, so one slow or
+  // unavailable source never costs the others.
+  const awarenessRequest = useRef(0);
+
+  const refreshAwareness = useCallback(async () => {
+    const point = live.current.coords;
+    if (!point) return;
+    const id = ++awarenessRequest.current;
+
+    const localAlertIds = live.current.alertIds;
+    const [outlookResult, regionalResult] = await Promise.allSettled([
+      fetchSpcOutlook(point.latitude, point.longitude),
+      fetchRegionalAlerts(point.latitude, point.longitude, localAlertIds),
+    ]);
+    if (id !== awarenessRequest.current) return;
+
+    if (outlookResult.status === 'fulfilled') {
+      setOutlooks(outlookResult.value);
+      const currentSettings = settingsRef.current;
+      await syncOutlookNotifications(
+        outlookResult.value,
+        currentSettings.alerts,
+        live.current.placeName,
+      );
+    }
+    if (regionalResult.status === 'fulfilled') {
+      setRegional(regionalResult.value);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!coords) return;
+    void refreshAwareness();
+    const timer = setInterval(() => void refreshAwareness(), AWARENESS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [coords, refreshAwareness]);
+
+  useOnAppResume(() => void refreshAwareness());
 
   useEffect(() => {
     let cancelled = false;
@@ -394,6 +525,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       lastUpdated,
       coords,
       sky,
+      tropical,
+      tropicalLoading,
+      refreshTropical,
+      outlooks,
+      regional,
+      refreshAwareness,
       refresh,
       requestPermission,
       updateSettings,
@@ -413,6 +550,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       placeSubtitle,
       refresh,
       refreshing,
+      outlooks,
+      refreshAwareness,
+      refreshTropical,
+      regional,
       removeSavedLocation,
       requestPermission,
       savedLocations,
@@ -421,6 +562,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       selectedId,
       settings,
       sky,
+      tropical,
+      tropicalLoading,
       updateSettings,
       weather,
     ],

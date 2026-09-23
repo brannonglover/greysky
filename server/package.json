@@ -8,7 +8,9 @@
     "smoke": "tsx scripts/smoke.ts",
     "preview": "tsx scripts/radar-preview.ts",
     "verify": "tsx scripts/verify-phase1.ts",
-    "test": "tsx scripts/motion.test.ts && tsx scripts/hrrr-run.test.ts"
+    "test": "tsx scripts/motion.test.ts && tsx scripts/hrrr-run.test.ts && tsx scripts/tropical.test.ts && tsx scripts/spc.test.ts",
+    "tropical:live": "tsx scripts/tropical-live.ts",
+    "spc:live": "tsx scripts/spc-live.ts"
   },
   "license": "ISC",
   "type": "commonjs",

@@ -1,7 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { NativeTabs, Icon, Label, VectorIcon } from 'expo-router/unstable-native-tabs';
-import React from 'react';
+import { NativeTabs, Badge, Icon, Label, VectorIcon } from 'expo-router/unstable-native-tabs';
+import React, { useMemo } from 'react';
 import { DynamicColorIOS, Platform } from 'react-native';
+
+import { useApp } from '@/context/AppContext';
+import { rankStormItems } from '@/lib/stormImpact';
+import { forecastStormSignals } from '@/lib/stormOutlook';
 
 const tabInk =
   Platform.OS === 'ios'
@@ -9,6 +13,22 @@ const tabInk =
     : '#FFFFFF';
 
 export default function TabLayout() {
+  const { weather, tropical, outlooks, regional } = useApp();
+
+  // The Storms tab grows more prominent as the threat does. Only an official
+  // alert already in effect earns the badge — an outlook days out is worth
+  // reading, not worth marking the tab.
+  const activeCount = useMemo(() => {
+    if (!weather) return 0;
+    return rankStormItems({
+      alerts: weather.alerts,
+      signals: forecastStormSignals(weather),
+      tropical,
+      outlooks,
+      regional,
+    }).filter((item) => item.tier === 'active').length;
+  }, [weather, tropical, outlooks, regional]);
+
   return (
     <NativeTabs
       tintColor={tabInk}
@@ -28,6 +48,14 @@ export default function TabLayout() {
           sf={{ default: 'sparkles', selected: 'sparkles' }}
           androidSrc={<VectorIcon family={Ionicons} name="sparkles" />}
         />
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="storms">
+        <Label>Storms</Label>
+        <Icon
+          sf={{ default: 'hurricane', selected: 'hurricane' }}
+          androidSrc={<VectorIcon family={Ionicons} name="thunderstorm-outline" />}
+        />
+        <Badge hidden={activeCount === 0}>{activeCount > 0 ? String(activeCount) : ''}</Badge>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="radar">
         <Label>Map</Label>

@@ -12,6 +12,14 @@
     "api/v2/radar/frames.ts": {
       "memory": 1024,
       "maxDuration": 20
+    },
+    "api/tropical/storms.ts": {
+      "memory": 512,
+      "maxDuration": 20
+    },
+    "api/spc/outlook.ts": {
+      "memory": 512,
+      "maxDuration": 20
     }
   }
 }

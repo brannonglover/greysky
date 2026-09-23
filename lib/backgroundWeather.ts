@@ -2,8 +2,15 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
-import { alertsEnabled, syncWeatherNotifications } from './notifications';
-import { loadLastPlace, loadSettings, saveWeatherCache } from './storage';
+import {
+  alertsEnabled,
+  syncOutlookNotifications,
+  syncTropicalNotifications,
+  syncWeatherNotifications,
+} from './notifications';
+import { fetchSpcOutlook } from './spc';
+import { loadLastPlace, loadSettings, saveTropicalCache, saveWeatherCache } from './storage';
+import { fetchTropicalReports } from './tropical';
 import type { AlertPrefs } from './types';
 import { fetchAlerts, fetchForecast } from './weather';
 
@@ -37,9 +44,18 @@ if (Platform.OS !== 'web') {
       }
       const place = await loadLastPlace();
       if (!place) return BackgroundTaskResult.Success;
-      const [forecast, alerts] = await Promise.all([
+      // Tropical is fetched alongside the forecast rather than after it: the
+      // two are independent, and a tropical outage must not cost the user
+      // their rain and severe-weather alerts.
+      const [forecast, alerts, tropical, outlooks] = await Promise.all([
         fetchForecast(place.latitude, place.longitude),
         fetchAlerts(place.latitude, place.longitude),
+        settings.alerts.tropical
+          ? fetchTropicalReports(place.latitude, place.longitude)
+          : Promise.resolve([]),
+        settings.alerts.severeOutlook
+          ? fetchSpcOutlook(place.latitude, place.longitude)
+          : Promise.resolve([]),
       ]);
       const bundle = { ...forecast, alerts };
       await Promise.all([
@@ -52,12 +68,20 @@ if (Platform.OS !== 'web') {
           selectedId: 'current',
           timestamp: Date.now(),
         }),
+        saveTropicalCache({
+          reports: tropical,
+          latitude: place.latitude,
+          longitude: place.longitude,
+          timestamp: Date.now(),
+        }),
         syncWeatherNotifications(
           bundle,
           settings.alerts,
           place.name,
           settings.units,
         ),
+        syncTropicalNotifications(tropical, settings.alerts, place.name),
+        syncOutlookNotifications(outlooks, settings.alerts, place.name),
       ]);
       return BackgroundTaskResult.Success;
     } catch {

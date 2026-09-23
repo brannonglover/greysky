@@ -27,6 +27,8 @@ import { useApp } from '@/context/AppContext';
 import { formatTemp } from '@/lib/units';
 import { RADAR_WET_INTENSITY, radarIntensityAt } from '@/lib/radarAtPoint';
 import { rainOutlook, rainVerdict } from '@/lib/rainOutlook';
+import { rankStormItems } from '@/lib/stormImpact';
+import { forecastStormSignals } from '@/lib/stormOutlook';
 import { useRadarAtPoint } from '@/lib/useRadarAtPoint';
 import { shouldPromoteRadarMap } from '@/lib/weather';
 
@@ -110,6 +112,7 @@ export default function ForecastScreen() {
     settings,
     sky,
     coords,
+    tropical,
     refresh,
     requestPermission,
   } = useApp();
@@ -188,6 +191,11 @@ export default function ForecastScreen() {
   const outlook = rainOutlook(weather.hourly, weather.timezone);
   const shareMessage = `${placeName}: ${formatTemp(weather.current.temperature, settings.units)} · ${weather.nowcastSummary}`;
   const urgent = shouldPromoteRadarMap(weather);
+  const stormItems = rankStormItems({
+    alerts: weather.alerts,
+    signals: forecastStormSignals(weather),
+    tropical,
+  });
   const map = <ForecastMap />;
   const radarNow = radarIntensityAt(radar, Date.now() / 1000);
   const rainIntensity = radarNow != null && radarNow <= RADAR_WET_INTENSITY ? 0 : sky.rain;
@@ -212,7 +220,7 @@ export default function ForecastScreen() {
                 precipProbability={today?.precipitationProbabilityMax}
                 verdict={rainVerdict(outlook)}
               />
-              <AlertBanner alerts={weather.alerts} />
+              <AlertBanner items={stormItems} />
               {urgent ? map : null}
               <HourlyTimeline
                 hours={weather.hourly}

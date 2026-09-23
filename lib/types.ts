@@ -2,7 +2,14 @@ export type Units = 'us' | 'si';
 
 export type AlertPrefs = {
   nextHourPrecip: boolean;
+  /** Official NWS watches and warnings. */
   severeWeather: boolean;
+  /** SPC severe-weather outlooks, one to three days ahead. */
+  severeOutlook: boolean;
+  /** Grey Sky's own read of the forecast, before any official product exists. */
+  strongStorm: boolean;
+  /** Tropical cyclones whose forecast wind field reaches the user. */
+  tropical: boolean;
   umbrella: boolean;
   sunscreen: boolean;
   dailySummary: boolean;

@@ -18,7 +18,22 @@ const ALERTS: { key: keyof AlertPrefs; title: string; body: string }[] = [
   {
     key: 'severeWeather',
     title: 'Severe weather',
-    body: 'Official watches and warnings from the National Weather Service.',
+    body: 'Official watches and warnings, issued by the National Weather Service.',
+  },
+  {
+    key: 'severeOutlook',
+    title: 'Severe weather outlooks',
+    body: "Days ahead, when NOAA's Storm Prediction Center places your area in a severe-weather risk.",
+  },
+  {
+    key: 'strongStorm',
+    title: 'Strong storms',
+    body: "Grey Sky's own read of the forecast — storms, damaging gusts, or heavy rain, before any official alert exists.",
+  },
+  {
+    key: 'tropical',
+    title: 'Tropical systems',
+    body: 'When a hurricane or tropical storm is forecast to bring damaging winds to your location.',
   },
   {
     key: 'umbrella',

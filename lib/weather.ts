@@ -308,6 +308,56 @@ export function shouldPromoteRadarMap(weather: WeatherBundle): boolean {
   );
 }
 
+/**
+ * Raw NWS alert shape. Shared by the point query and the regional sweep so the
+ * two cannot drift into filtering or naming alerts differently.
+ */
+export type AlertFeature = {
+  id: string;
+  geometry?: { type: string; coordinates: unknown } | null;
+  properties: {
+    event?: string;
+    headline?: string;
+    description?: string;
+    severity?: string;
+    status?: string;
+    messageType?: string;
+    onset?: string;
+    ends?: string;
+    areaDesc?: string;
+  };
+};
+
+export type AlertResponse = { features?: AlertFeature[] };
+
+/** Drops tests, cancellations and anything already expired. */
+export function usableAlertFeatures(json: AlertResponse): AlertFeature[] {
+  return (json.features ?? []).filter((feature) => {
+    const props = feature.properties;
+    if (!props.event?.trim() && !props.headline?.trim()) return false;
+    if (props.status && props.status !== 'Actual') return false;
+    if (props.messageType === 'Cancel') return false;
+    return isActiveAlert(props.ends);
+  });
+}
+
+export function toWeatherAlert(feature: AlertFeature): WeatherAlert {
+  const severity = feature.properties.severity;
+  return {
+    id: feature.id,
+    event: feature.properties.event?.trim() || 'Weather alert',
+    headline:
+      feature.properties.headline?.trim() || feature.properties.event?.trim() || 'Alert',
+    description: feature.properties.description ?? '',
+    severity:
+      severity === 'Minor' || severity === 'Moderate' || severity === 'Severe' || severity === 'Extreme'
+        ? severity
+        : 'Unknown',
+    onset: feature.properties.onset,
+    ends: feature.properties.ends,
+  };
+}
+
 export async function fetchAlerts(latitude: number, longitude: number): Promise<WeatherAlert[]> {
   try {
     const response = await fetch(
@@ -320,53 +370,8 @@ export async function fetchAlerts(latitude: number, longitude: number): Promise<
       },
     );
     if (!response.ok) return [];
-    const json = (await response.json()) as {
-      features?: {
-        id: string;
-        properties: {
-          event?: string;
-          headline?: string;
-          description?: string;
-          severity?: string;
-          status?: string;
-          messageType?: string;
-          onset?: string;
-          ends?: string;
-        };
-      }[];
-    };
-    return (json.features ?? [])
-      .filter((feature) => {
-        const props = feature.properties;
-        const event = props.event?.trim();
-        const headline = props.headline?.trim();
-        if (!event && !headline) return false;
-        if (props.status && props.status !== 'Actual') return false;
-        if (props.messageType === 'Cancel') return false;
-        return isActiveAlert(props.ends);
-      })
-      .slice(0, 6)
-      .map((feature) => {
-        const severity = feature.properties.severity;
-        return {
-          id: feature.id,
-          event: feature.properties.event?.trim() || 'Weather alert',
-          headline:
-            feature.properties.headline?.trim() ||
-            feature.properties.event?.trim() ||
-            'Alert',
-          description: feature.properties.description ?? '',
-          severity:
-            severity === 'Minor' ||
-            severity === 'Moderate' ||
-            severity === 'Severe' ||
-            severity === 'Extreme'
-              ? severity
-              : 'Unknown',
-          onset: feature.properties.onset,
-          ends: feature.properties.ends,
-        };
-      });
+    const json = (await response.json()) as AlertResponse;
+    return usableAlertFeatures(json).slice(0, 6).map(toWeatherAlert);
   } catch {
     return [];
   }
