@@ -81,7 +81,16 @@ module.exports = {
             'Grey Sky uses your location to show hyperlocal minute-by-minute weather at your exact spot.',
         },
       ],
-      'expo-notifications',
+      [
+        'expo-notifications',
+        {
+          // Adds `remote-notification` to UIBackgroundModes, which is what
+          // allows a silent (content-available) push to wake the app and run
+          // the push-refresh task. Native change: needs a prebuild and a new
+          // build, not an OTA update.
+          enableBackgroundRemoteNotifications: true,
+        },
+      ],
       'expo-background-task',
     ],
     experiments: {

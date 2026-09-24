@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { syncBackgroundWeatherTask } from '@/lib/backgroundWeather';
+import { syncPushRefreshTask } from '@/lib/pushRefresh';
 import { skyFromWeather, type SkyPalette } from '@/lib/sky';
 import type { SavedLocation, Settings, WeatherBundle } from '@/lib/types';
 import {
@@ -502,10 +503,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    // Registered on every launch, independent of settings and of whether the
-    // first fetch succeeds: this is what fills the cache read just below, so
-    // the next launch has content before the network is touched.
+    // Both wake paths are registered on every launch, independent of settings
+    // and of whether the first fetch succeeds: they fill the cache read just
+    // below, so the next launch has content before the network is touched.
+    // Registering the push task needs no permission and no token — whether a
+    // silent push can actually be delivered is a separate question.
     void syncBackgroundWeatherTask();
+    void syncPushRefreshTask();
     (async () => {
       const [storedSettings, storedLocations, storedSelected, perm, cached, cachedAwareness] = await Promise.all([
         loadSettings(),
