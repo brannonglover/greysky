@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, fonts, glass, hairline, pressed, radii, spacing, typeStyles } from '@/constants/theme';
 import { formatClock } from '@/lib/format';
 import type { WeatherAlert } from '@/lib/types';
+import type { AlertConfidence } from '@/lib/weather';
 
 /**
  * An official National Weather Service product, shown with the event name
@@ -14,6 +15,16 @@ import type { WeatherAlert } from '@/lib/types';
 
 type Props = {
   alert: WeatherAlert;
+  /**
+   * Whether this alert set has been re-checked against NWS recently. An
+   * `unconfirmed` alert is still shown with its real event name and palette —
+   * it is a genuine NWS product — but it carries the time it was last
+   * confirmed, because a cancellation issued since then is invisible from the
+   * cached copy alone.
+   */
+  confidence?: AlertConfidence;
+  /** When the alert set was last confirmed; 0 if it never has been. */
+  verifiedAt?: number;
 };
 
 function severityTone(severity: WeatherAlert['severity']): string {
@@ -26,11 +37,12 @@ function window(alert: WeatherAlert): string | null {
   return `Until ${formatClock(new Date(ends).toISOString())}`;
 }
 
-export function AlertDetailCard({ alert }: Props) {
+export function AlertDetailCard({ alert, confidence = 'confirmed', verifiedAt = 0 }: Props) {
   const [open, setOpen] = useState(false);
   const tone = severityTone(alert.severity);
   const until = window(alert);
   const body = alert.description.trim() || alert.headline;
+  const stale = confidence === 'unconfirmed';
 
   return (
     <View style={[styles.card, { borderColor: tone }]}>
@@ -57,6 +69,14 @@ export function AlertDetailCard({ alert }: Props) {
         <Text style={styles.source}>National Weather Service</Text>
         {until ? <Text style={styles.until}>{until}</Text> : null}
       </View>
+
+      {stale ? (
+        <Text style={styles.unverified}>
+          {verifiedAt
+            ? `Last confirmed ${formatClock(new Date(verifiedAt).toISOString())}. The Weather Service may have updated or canceled it since.`
+            : 'Not yet confirmed with the Weather Service.'}
+        </Text>
+      ) : null}
 
       {open && body ? <Text style={styles.body}>{body}</Text> : null}
     </View>
@@ -105,6 +125,13 @@ const styles = StyleSheet.create({
     color: colors.textTertiary,
     fontFamily: fonts.mono,
     fontSize: 11,
+  },
+  unverified: {
+    color: colors.textTertiary,
+    fontFamily: fonts.body,
+    fontSize: 11.5,
+    lineHeight: 16,
+    marginTop: 8,
   },
   body: {
     color: colors.textSecondary,

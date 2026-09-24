@@ -110,6 +110,16 @@ export type WeatherBundle = {
   nowcastSummary: string;
   daySummary: string;
   alerts: WeatherAlert[];
+  /**
+   * When `alerts` was last confirmed against the NWS feed, or 0 if it never
+   * has been.
+   *
+   * This is not the same as when the bundle was cached. A cached alert set is
+   * evidence that those alerts existed at `alertsVerifiedAt`; it is never
+   * evidence that they are still in effect now, because a cancellation is
+   * invisible from the cached copy alone.
+   */
+  alertsVerifiedAt: number;
 };
 
 export type HourlyMetric = 'temp' | 'feels' | 'precip';

@@ -30,7 +30,7 @@ import { rainOutlook, rainVerdict } from '@/lib/rainOutlook';
 import { rankStormItems } from '@/lib/stormImpact';
 import { forecastStormSignals } from '@/lib/stormOutlook';
 import { useRadarAtPoint } from '@/lib/useRadarAtPoint';
-import { shouldPromoteRadarMap } from '@/lib/weather';
+import { alertConfidence, shouldPromoteRadarMap } from '@/lib/weather';
 
 const styles = StyleSheet.create({
   safe: {
@@ -220,7 +220,11 @@ export default function ForecastScreen() {
                 precipProbability={today?.precipitationProbabilityMax}
                 verdict={rainVerdict(outlook)}
               />
-              <AlertBanner items={stormItems} />
+              <AlertBanner
+                items={stormItems}
+                confidence={alertConfidence(weather.alertsVerifiedAt)}
+                verifiedAt={weather.alertsVerifiedAt}
+              />
               {urgent ? map : null}
               <HourlyTimeline
                 hours={weather.hourly}

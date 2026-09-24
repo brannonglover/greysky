@@ -14,6 +14,8 @@ import { colors, fonts, glass, spacing, typeStyles } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
 import { rankStormItems, type StormItem } from '@/lib/stormImpact';
 import { forecastStormSignals } from '@/lib/stormOutlook';
+import { alertConfidence } from '@/lib/weather';
+import { formatClock } from '@/lib/format';
 
 /**
  * "What weather could affect me, and when?"
@@ -57,6 +59,17 @@ export default function StormsScreen() {
     });
   }, [weather, tropical, outlooks, regional]);
 
+  // Alerts are the only source here that can be silently withdrawn upstream —
+  // a cancellation is invisible from the cached copy, which still carries its
+  // original end time. Everything else on this screen either expires on a
+  // published schedule or is derived from forecast data the app already holds.
+  const alertsVerifiedAt = weather?.alertsVerifiedAt ?? 0;
+  const alertsConfidence = alertConfidence(alertsVerifiedAt);
+  const alertsStale = alertsConfidence === 'unconfirmed';
+  const confirmedClock = alertsVerifiedAt
+    ? formatClock(new Date(alertsVerifiedAt).toISOString())
+    : null;
+
   const active = items.filter((item) => item.tier === 'active');
   const incoming = items.filter((item) => item.tier === 'incoming');
   const tracking = items.filter((item) => item.tier === 'tracking' && item.source !== 'regional');
@@ -69,7 +82,14 @@ export default function StormsScreen() {
   const render = (item: StormItem, muted = false) => {
     switch (item.source) {
       case 'nws':
-        return <AlertDetailCard key={item.key} alert={item.alert} />;
+        return (
+          <AlertDetailCard
+            key={item.key}
+            alert={item.alert}
+            confidence={alertsConfidence}
+            verifiedAt={weather?.alertsVerifiedAt ?? 0}
+          />
+        );
       case 'regional':
         return <RegionalAlertCard key={item.key} entry={{
           alert: item.alert,
@@ -109,12 +129,44 @@ export default function StormsScreen() {
 
           {quiet ? (
             <View style={styles.empty}>
-              <Ionicons name="checkmark-circle-outline" size={34} color={colors.precip} />
-              <Text style={styles.emptyTitle}>Nothing active for {placeName}</Text>
-              <Text style={styles.emptyBody}>
-                No official alerts, no severe-weather outlook, no strong storms in the forecast,
-                and no tropical system expected to reach you.
-              </Text>
+              <Ionicons
+                name={alertsStale ? 'alert-circle-outline' : 'checkmark-circle-outline'}
+                size={34}
+                color={alertsStale ? colors.textTertiary : colors.precip}
+              />
+              {/*
+                An all-clear is a claim, and it must not be made on the strength
+                of a failed request. When the alert feed could not be re-checked
+                the screen says what it actually knows and when it knew it,
+                rather than reporting an outage as safety.
+              */}
+              {!alertsStale ? (
+                <>
+                  <Text style={styles.emptyTitle}>Nothing active for {placeName}</Text>
+                  <Text style={styles.emptyBody}>
+                    No official alerts, no severe-weather outlook, no strong storms in the
+                    forecast, and no tropical system expected to reach you.
+                  </Text>
+                </>
+              ) : confirmedClock ? (
+                <>
+                  <Text style={styles.emptyTitle}>Nothing active as of {confirmedClock}</Text>
+                  <Text style={styles.emptyBody}>
+                    No severe-weather outlook, no strong storms in the forecast, and no tropical
+                    system expected to reach you. Official alerts have not been re-checked since
+                    {' '}{confirmedClock}, so pull to refresh for the current picture.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.emptyTitle}>Alert status unavailable</Text>
+                  <Text style={styles.emptyBody}>
+                    No severe-weather outlook, no strong storms in the forecast, and no tropical
+                    system expected to reach you — but the Weather Service alert feed could not be
+                    reached, so this is not an all-clear. Pull to refresh.
+                  </Text>
+                </>
+              )}
             </View>
           ) : null}
 

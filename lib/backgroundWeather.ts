@@ -2,17 +2,7 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
-import {
-  alertsEnabled,
-  syncOutlookNotifications,
-  syncTropicalNotifications,
-  syncWeatherNotifications,
-} from './notifications';
-import { fetchSpcOutlook } from './spc';
-import { loadLastPlace, loadSettings, saveTropicalCache, saveWeatherCache } from './storage';
-import { fetchTropicalReports } from './tropical';
-import type { AlertPrefs } from './types';
-import { fetchAlerts, fetchForecast } from './weather';
+import { runWeatherRefresh } from './refreshWeatherCaches';
 
 export const BACKGROUND_WEATHER_TASK = 'grey-sky-weather-check';
 
@@ -36,76 +26,47 @@ function loadBackgroundTask(): BackgroundTaskModule | null {
 const BackgroundTask = loadBackgroundTask();
 
 if (Platform.OS !== 'web') {
+  // Defined at module scope, and this module is imported for its side effects
+  // from app/_layout.tsx: on a headless launch the OS dispatches to the task
+  // before any component renders, so it has to already exist.
   TaskManager.defineTask(BACKGROUND_WEATHER_TASK, async () => {
     try {
-      const settings = await loadSettings();
-      if (!alertsEnabled(settings.alerts)) {
-        return BackgroundTaskResult.Success;
-      }
-      const place = await loadLastPlace();
-      if (!place) return BackgroundTaskResult.Success;
-      // Tropical is fetched alongside the forecast rather than after it: the
-      // two are independent, and a tropical outage must not cost the user
-      // their rain and severe-weather alerts.
-      const [forecast, alerts, tropical, outlooks] = await Promise.all([
-        fetchForecast(place.latitude, place.longitude),
-        fetchAlerts(place.latitude, place.longitude),
-        settings.alerts.tropical
-          ? fetchTropicalReports(place.latitude, place.longitude)
-          : Promise.resolve([]),
-        settings.alerts.severeOutlook
-          ? fetchSpcOutlook(place.latitude, place.longitude)
-          : Promise.resolve([]),
-      ]);
-      const bundle = { ...forecast, alerts };
-      await Promise.all([
-        saveWeatherCache({
-          bundle,
-          placeName: place.name,
-          placeSubtitle: '',
-          latitude: place.latitude,
-          longitude: place.longitude,
-          selectedId: 'current',
-          timestamp: Date.now(),
-        }),
-        saveTropicalCache({
-          reports: tropical,
-          latitude: place.latitude,
-          longitude: place.longitude,
-          timestamp: Date.now(),
-        }),
-        syncWeatherNotifications(
-          bundle,
-          settings.alerts,
-          place.name,
-          settings.units,
-        ),
-        syncTropicalNotifications(tropical, settings.alerts, place.name),
-        syncOutlookNotifications(outlooks, settings.alerts, place.name),
-      ]);
-      return BackgroundTaskResult.Success;
+      const outcome = await runWeatherRefresh('background-task');
+      // Only an outright forecast failure is worth reporting as one. A skipped
+      // forecast means it was already fresh, which is a successful outcome for
+      // this run even though it fetched nothing.
+      return outcome.sources.forecast === 'failed'
+        ? BackgroundTaskResult.Failed
+        : BackgroundTaskResult.Success;
     } catch {
       return BackgroundTaskResult.Failed;
     }
   });
 }
 
-export async function syncBackgroundWeatherTask(prefs: AlertPrefs): Promise<void> {
+/**
+ * Keeps the background refresh registered.
+ *
+ * Registration is unconditional: the task warms the cache the UI reads on
+ * launch, which every user benefits from, not just the ones who opted into
+ * notifications. The refresh itself decides whether to notify.
+ *
+ * This tier stays even once silent push lands. It is the only one that still
+ * works when APNs, Expo's push service, or our own scheduler is unavailable.
+ * Scheduling remains the system's call either way: iOS treats the 15-minute
+ * floor as a request and runs the task when battery, network and usage
+ * patterns suit it, and a force-quit app does not run at all.
+ */
+export async function syncBackgroundWeatherTask(): Promise<void> {
   if (Platform.OS === 'web' || !BackgroundTask) return;
   try {
     const status = await BackgroundTask.getStatusAsync();
     if (status === BackgroundTask.BackgroundTaskStatus.Restricted) return;
-    const registered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_WEATHER_TASK);
-    if (!alertsEnabled(prefs)) {
-      if (registered) await BackgroundTask.unregisterTaskAsync(BACKGROUND_WEATHER_TASK);
-      return;
-    }
-    if (!registered) {
-      await BackgroundTask.registerTaskAsync(BACKGROUND_WEATHER_TASK, {
-        minimumInterval: 15,
-      });
-    }
+    if (await TaskManager.isTaskRegisteredAsync(BACKGROUND_WEATHER_TASK)) return;
+    await BackgroundTask.registerTaskAsync(BACKGROUND_WEATHER_TASK, {
+      minimumInterval: 15,
+    });
   } catch {
-    // Background refresh is best-effort; foreground alerts still work.
+    // Background refresh is best-effort; the foreground paths still work.
   }
 }

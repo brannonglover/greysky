@@ -236,6 +236,10 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
     nowcastSummary: nowcastSummary(minutely, current.weatherCode),
     daySummary: daySummary(hourly, daily[0]),
     alerts: [],
+    // The forecast service knows nothing about alerts. Callers merge a real
+    // snapshot in; 0 keeps an un-merged bundle honest rather than letting it
+    // claim a confirmed empty alert set.
+    alertsVerifiedAt: 0,
   };
 }
 
@@ -358,23 +362,83 @@ export function toWeatherAlert(feature: AlertFeature): WeatherAlert {
   };
 }
 
+/**
+ * Active NWS alerts for a point.
+ *
+ * Throws rather than returning an empty list when the service cannot be
+ * reached. An empty result has to mean "NWS confirmed there is nothing here";
+ * if a network failure could also produce it, a live tornado warning would
+ * vanish from the cache the first time the request timed out. Callers decide
+ * what to keep on failure — see `nextAlertSnapshot`.
+ */
 export async function fetchAlerts(latitude: number, longitude: number): Promise<WeatherAlert[]> {
-  try {
-    const response = await fetch(
-      `${NWS_ALERTS}?point=${latitude.toFixed(4)},${longitude.toFixed(4)}`,
-      {
-        headers: {
-          Accept: 'application/geo+json, application/json',
-          'User-Agent': 'GreySkyWeather/1.1 (com.brannonglover.greysky; expo-app)',
-        },
+  const response = await fetch(
+    `${NWS_ALERTS}?point=${latitude.toFixed(4)},${longitude.toFixed(4)}`,
+    {
+      headers: {
+        Accept: 'application/geo+json, application/json',
+        'User-Agent': 'GreySkyWeather/1.1 (com.brannonglover.greysky; expo-app)',
       },
-    );
-    if (!response.ok) return [];
-    const json = (await response.json()) as AlertResponse;
-    return usableAlertFeatures(json).slice(0, 6).map(toWeatherAlert);
-  } catch {
-    return [];
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`NWS alerts unavailable (${response.status})`);
   }
+  const json = (await response.json()) as AlertResponse;
+  return usableAlertFeatures(json).slice(0, 6).map(toWeatherAlert);
+}
+
+/**
+ * A fetch that may not have been made at all.
+ *
+ * `skipped` is distinct from `rejected`: nothing went wrong, the data was
+ * simply still fresh. Both leave the previous value in place, but only
+ * `rejected` means the source is in trouble.
+ */
+export type Attempt<T> = PromiseSettledResult<T> | { status: 'skipped' };
+
+export type AlertSnapshot = {
+  alerts: WeatherAlert[];
+  /** When this set was last confirmed against NWS; 0 if it never has been. */
+  verifiedAt: number;
+};
+
+/**
+ * How long an alert set is treated as currently confirmed.
+ *
+ * Matched to the foreground refresh cadence: inside this window the app has
+ * either just fetched or is about to, so the displayed set is as current as
+ * the app is capable of being. Past it, the set is still shown — hiding a
+ * possible warning is the worse error — but labelled as last-known.
+ */
+export const ALERT_CONFIRMED_MS = 10 * 60_000;
+
+export type AlertConfidence = 'confirmed' | 'unconfirmed';
+
+export function alertConfidence(verifiedAt: number, now: number = Date.now()): AlertConfidence {
+  if (!verifiedAt) return 'unconfirmed';
+  return now - verifiedAt <= ALERT_CONFIRMED_MS ? 'confirmed' : 'unconfirmed';
+}
+
+/**
+ * The alert set to keep after an attempt to refresh it.
+ *
+ * A rejected fetch is not evidence that the alerts are gone, so the previous
+ * set survives with its **original** `verifiedAt` — the age keeps growing, and
+ * the UI degrades to last-known rather than silently presenting stale warnings
+ * as current. Only a successful fetch may remove an alert, because cancellation
+ * cannot be detected from the cached copy: a canceled warning keeps whatever
+ * future `ends` time it was issued with.
+ */
+export function nextAlertSnapshot(
+  previous: AlertSnapshot | null,
+  result: Attempt<WeatherAlert[]>,
+  now: number = Date.now(),
+): AlertSnapshot {
+  if (result.status === 'fulfilled') {
+    return { alerts: result.value, verifiedAt: now };
+  }
+  return previous ?? { alerts: [], verifiedAt: 0 };
 }
 
 export async function searchPlaces(query: string): Promise<GeoResult[]> {

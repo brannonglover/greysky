@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { OutlookNotifyState } from './spc';
+import { emptyRefreshState as emptyState, type RefreshSource, type RefreshState } from './wakeSchedule';
 import type { AlertPrefs, SavedLocation, Settings, Units } from './types';
 
 export type { OutlookNotifyState };
@@ -212,5 +213,188 @@ export async function loadTropicalCache(): Promise<TropicalCache | null> {
     return parsed as TropicalCache;
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Awareness cache – SPC outlooks and the regional sweep, so the Storms tab is
+// populated the moment it opens instead of waiting on two slow services. Both
+// carry their own validity windows, so a cached copy is filtered on read
+// rather than trusted wholesale.
+// ---------------------------------------------------------------------------
+
+const AWARENESS_CACHE_KEY = 'umbra.awarenessCache';
+
+export type AwarenessCache = {
+  outlooks: import('./spc').DayOutlook[];
+  regional: import('./regional').RegionalAlert[];
+  latitude: number;
+  longitude: number;
+  timestamp: number;
+};
+
+export async function saveAwarenessCache(cache: AwarenessCache): Promise<void> {
+  await AsyncStorage.setItem(AWARENESS_CACHE_KEY, JSON.stringify(cache));
+}
+
+export async function loadAwarenessCache(): Promise<AwarenessCache | null> {
+  try {
+    const raw = await AsyncStorage.getItem(AWARENESS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AwarenessCache>;
+    if (typeof parsed.timestamp !== 'number') return null;
+    return {
+      outlooks: Array.isArray(parsed.outlooks) ? parsed.outlooks : [],
+      regional: Array.isArray(parsed.regional) ? parsed.regional : [],
+      latitude: typeof parsed.latitude === 'number' ? parsed.latitude : 0,
+      longitude: typeof parsed.longitude === 'number' ? parsed.longitude : 0,
+      timestamp: parsed.timestamp,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Selected place – resolved from storage alone, so the background refresh can
+// target exactly what the UI would show without any React state to read.
+// ---------------------------------------------------------------------------
+
+export type TargetPlace = {
+  latitude: number;
+  longitude: number;
+  name: string;
+  subtitle: string;
+  selectedId: string | 'current';
+};
+
+/**
+ * The place the app would display if it opened right now: the saved location
+ * the user picked, or the last resolved fix when they are on 'current'.
+ *
+ * The background refresh resolves its target this way so the cache it writes
+ * is labelled with the same `selectedId` the UI checks before adopting it —
+ * otherwise a background write is either discarded on launch or applied to the
+ * wrong header.
+ */
+export async function resolveSelectedPlace(): Promise<TargetPlace | null> {
+  const [selectedId, saved, last] = await Promise.all([
+    loadSelectedLocationId(),
+    loadSavedLocations(),
+    loadLastPlace(),
+  ]);
+
+  if (selectedId !== 'current') {
+    const match = saved.find((item) => item.id === selectedId);
+    if (match) {
+      return {
+        latitude: match.latitude,
+        longitude: match.longitude,
+        name: match.name,
+        subtitle: match.subtitle ?? '',
+        selectedId: match.id,
+      };
+    }
+  }
+
+  if (!last) return null;
+  // 'current' keeps no stored subtitle of its own: reverse geocoding happens in
+  // the foreground. Carry the last one forward rather than blanking the header.
+  const cached = await loadWeatherCache();
+  return {
+    latitude: last.latitude,
+    longitude: last.longitude,
+    name: last.name,
+    subtitle: cached && cached.selectedId === 'current' ? cached.placeSubtitle : '',
+    selectedId: 'current',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Refresh state – when each source was last *successfully* fetched.
+//
+// Deliberately separate from the caches themselves. A cache entry records what
+// was written; this records what was confirmed. The two diverge whenever a
+// fetch fails, and it is the confirmation time that decides when the device
+// next needs waking — an app session whose requests all failed must not push
+// the next background opportunity further away.
+// ---------------------------------------------------------------------------
+
+const REFRESH_STATE_KEY = 'umbra.refreshState';
+
+export type { RefreshSource, RefreshState } from './wakeSchedule';
+export { emptyRefreshState } from './wakeSchedule';
+
+
+function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+export async function loadRefreshState(): Promise<RefreshState> {
+  try {
+    const raw = await AsyncStorage.getItem(REFRESH_STATE_KEY);
+    if (!raw) return emptyState;
+    const parsed = JSON.parse(raw) as Partial<Record<keyof RefreshState, unknown>>;
+    return {
+      forecast: num(parsed.forecast),
+      alerts: num(parsed.alerts),
+      tropical: num(parsed.tropical),
+      outlook: num(parsed.outlook),
+      regional: num(parsed.regional),
+      lastAttemptAt: num(parsed.lastAttemptAt),
+    };
+  } catch {
+    return emptyState;
+  }
+}
+
+/**
+ * Advances only the sources that actually succeeded.
+ *
+ * Timestamps move forward and never backward, so a stale concurrent writer
+ * cannot undo a fresher confirmation.
+ */
+export async function recordRefreshSuccess(
+  verified: Partial<Record<RefreshSource, number>>,
+  attemptedAt: number = Date.now(),
+): Promise<RefreshState> {
+  const current = await loadRefreshState();
+  const next: RefreshState = { ...current, lastAttemptAt: Math.max(current.lastAttemptAt, attemptedAt) };
+  for (const [source, at] of Object.entries(verified)) {
+    const key = source as RefreshSource;
+    if (typeof at === 'number' && at > next[key]) next[key] = at;
+  }
+  await AsyncStorage.setItem(REFRESH_STATE_KEY, JSON.stringify(next));
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// Install identity – a stable id for this installation, used as the primary key
+// for the device's server-side wake record.
+//
+// Deliberately not the push token: Expo tokens rotate, and keying on the token
+// would orphan the old record and leave a dead token in the queue forever.
+// ---------------------------------------------------------------------------
+
+const INSTALL_ID_KEY = 'umbra.installId';
+
+function randomId(): string {
+  // Not security-sensitive — it only has to be unique across installs. Kept
+  // dependency-free rather than pulling in a uuid library for one value.
+  const random = () => Math.random().toString(36).slice(2, 10);
+  return `${Date.now().toString(36)}-${random()}${random()}`;
+}
+
+export async function loadInstallId(): Promise<string> {
+  try {
+    const existing = await AsyncStorage.getItem(INSTALL_ID_KEY);
+    if (existing) return existing;
+    const created = randomId();
+    await AsyncStorage.setItem(INSTALL_ID_KEY, created);
+    return created;
+  } catch {
+    // Unpersisted fallback: a heartbeat with a fresh id is better than none,
+    // and the next launch will try to persist again.
+    return randomId();
   }
 }

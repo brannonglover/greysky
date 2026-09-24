@@ -15,21 +15,30 @@ import { fetchRegionalAlerts, type RegionalAlert } from '@/lib/regional';
 import { fetchSpcOutlook, type DayOutlook } from '@/lib/spc';
 import {
   defaultSettings,
+  loadAwarenessCache,
   loadSavedLocations,
   loadSelectedLocationId,
   loadSettings,
   loadTropicalCache,
   loadWeatherCache,
+  recordRefreshSuccess,
+  saveAwarenessCache,
   saveLastPlace,
   saveSavedLocations,
   saveSelectedLocationId,
   saveSettings,
   saveTropicalCache,
   saveWeatherCache,
+  type AwarenessCache,
 } from '@/lib/storage';
 import { fetchTropicalReports, type TropicalReport } from '@/lib/tropical';
 import { useOnAppResume } from '@/lib/useOnAppResume';
-import { fetchAlerts, fetchForecast } from '@/lib/weather';
+import {
+  fetchAlerts,
+  fetchForecast,
+  nextAlertSnapshot,
+  type AlertSnapshot,
+} from '@/lib/weather';
 
 type PermissionState = Location.PermissionStatus | 'undetermined';
 
@@ -75,6 +84,23 @@ const RESUME_STALE_MS = 2 * 60_000;
 const TROPICAL_REFRESH_MS = 30 * 60_000;
 /** SPC reissues day 1 five times a day; regional alerts move faster. */
 const AWARENESS_REFRESH_MS = 10 * 60_000;
+/** A cached awareness sweep only describes the area it was taken in. */
+const AWARENESS_CACHE_RADIUS_DEG = 0.5;
+
+/**
+ * Filters a cached awareness sweep against the validity windows the sources
+ * publish themselves, so warming the Storms tab from cache can never present
+ * an outlook or a warning that has already expired as if it were current.
+ */
+function liveAwareness(cache: AwarenessCache, now: number = Date.now()) {
+  return {
+    outlooks: cache.outlooks.filter((day) => day.validTo > now),
+    regional: cache.regional.filter((item) => {
+      const ends = item.alert.ends ? Date.parse(item.alert.ends) : Number.NaN;
+      return Number.isNaN(ends) || ends > now;
+    }),
+  };
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -127,6 +153,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  // The last alert set NWS actually confirmed, so a failed refresh can keep it
+  // rather than writing an empty one. Keyed by place: alerts belonging to the
+  // location the user just left must never carry over to the new one.
+  const alertSnapshot = useRef<{ selectedId: string | 'current'; snapshot: AlertSnapshot } | null>(
+    null,
+  );
+
   const loadWeatherAt = useCallback(
     async (latitude: number, longitude: number, name: string, subtitle: string, persistId: string | 'current') => {
       // Keep the identity stable when the fix has not moved, so the automatic
@@ -136,11 +169,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
       setPlaceName(name);
       setPlaceSubtitle(subtitle);
-      const [forecast, alerts] = await Promise.all([
+      // Settled rather than all: NWS being unreachable must not cost the user
+      // their forecast, and must not be recorded as "no alerts here".
+      const [forecastResult, alertsResult] = await Promise.allSettled([
         fetchForecast(latitude, longitude),
         fetchAlerts(latitude, longitude),
       ]);
-      const bundle = { ...forecast, alerts };
+      if (forecastResult.status === 'rejected') throw forecastResult.reason;
+
+      const previous =
+        alertSnapshot.current?.selectedId === persistId ? alertSnapshot.current.snapshot : null;
+      const snapshot = nextAlertSnapshot(previous, alertsResult);
+      alertSnapshot.current = { selectedId: persistId, snapshot };
+
+      const bundle = {
+        ...forecastResult.value,
+        alerts: snapshot.alerts,
+        alertsVerifiedAt: snapshot.verifiedAt,
+      };
+      // Only what actually succeeded is recorded. Opening the app is not
+      // evidence that its data refreshed, so a session whose alert fetch failed
+      // must not push the next background wake further out.
+      void recordRefreshSuccess({
+        forecast: Date.now(),
+        alerts: alertsResult.status === 'fulfilled' ? Date.now() : undefined,
+      });
       setWeather(bundle);
       setLastUpdated(new Date());
       setError(null);
@@ -164,7 +217,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await ensureNotificationSetup();
         }
         await syncWeatherNotifications(bundle, currentSettings.alerts, name, currentSettings.units);
-        await syncBackgroundWeatherTask(currentSettings.alerts);
       })();
     },
     [],
@@ -239,11 +291,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (relocate) {
         try {
           const cached = await loadWeatherCache();
-          if (cached && cached.timestamp > (state.lastUpdated?.getTime() ?? 0)) {
+          // Only adopt a cache written for the place that is currently
+          // selected — the background refresh may have run while a different
+          // location was showing.
+          if (
+            cached &&
+            cached.selectedId === state.selectedId &&
+            cached.timestamp > (state.lastUpdated?.getTime() ?? 0)
+          ) {
             setWeather(cached.bundle);
+            alertSnapshot.current = {
+              selectedId: cached.selectedId,
+              snapshot: {
+                alerts: cached.bundle.alerts,
+                verifiedAt: cached.bundle.alertsVerifiedAt,
+              },
+            };
             setPlaceName(cached.placeName);
             setPlaceSubtitle(cached.placeSubtitle);
-            setCoords({ latitude: cached.latitude, longitude: cached.longitude });
+            setCoords((prev) =>
+              prev && prev.latitude === cached.latitude && prev.longitude === cached.longitude
+                ? prev
+                : { latitude: cached.latitude, longitude: cached.longitude },
+            );
             setLastUpdated(new Date(cached.timestamp));
           }
         } catch {
@@ -294,6 +364,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const reports = await fetchTropicalReports(point.latitude, point.longitude);
       if (id !== tropicalRequest.current) return;
+      void recordRefreshSuccess({ tropical: Date.now() });
       setTropical(reports);
       await saveTropicalCache({
         reports,
@@ -341,6 +412,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // independent of the forecast, and independent of each other, so one slow or
   // unavailable source never costs the others.
   const awarenessRequest = useRef(0);
+  /** When the awareness data now on screen was taken, so a cache read can tell
+   * whether it would be going backwards. */
+  const awarenessAt = useRef(0);
 
   const refreshAwareness = useCallback(async () => {
     const point = live.current.coords;
@@ -353,6 +427,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchRegionalAlerts(point.latitude, point.longitude, localAlertIds),
     ]);
     if (id !== awarenessRequest.current) return;
+    awarenessAt.current = Date.now();
+    void recordRefreshSuccess({
+      outlook: outlookResult.status === 'fulfilled' ? Date.now() : undefined,
+      regional: regionalResult.status === 'fulfilled' ? Date.now() : undefined,
+    });
 
     if (outlookResult.status === 'fulfilled') {
       setOutlooks(outlookResult.value);
@@ -366,21 +445,69 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (regionalResult.status === 'fulfilled') {
       setRegional(regionalResult.value);
     }
+
+    // Cached only when the whole sweep succeeded: writing a half-empty sweep
+    // would drop the good half of whatever the last full one stored.
+    if (outlookResult.status === 'fulfilled' && regionalResult.status === 'fulfilled') {
+      await saveAwarenessCache({
+        outlooks: outlookResult.value,
+        regional: regionalResult.value,
+        latitude: point.latitude,
+        longitude: point.longitude,
+        timestamp: Date.now(),
+      });
+    }
+  }, []);
+
+  /**
+   * Shows the last sweep the background refresh (or a previous session) stored,
+   * so the Storms tab has content before the network answers.
+   */
+  const hydrateAwareness = useCallback(async () => {
+    const point = live.current.coords;
+    if (!point) return;
+    try {
+      const cached = await loadAwarenessCache();
+      // Never go backwards: a sweep may have landed while this read was out.
+      if (!cached || cached.timestamp <= awarenessAt.current) return;
+      const moved =
+        Math.abs(cached.latitude - point.latitude) > AWARENESS_CACHE_RADIUS_DEG ||
+        Math.abs(cached.longitude - point.longitude) > AWARENESS_CACHE_RADIUS_DEG;
+      if (moved) return;
+      const fresh = liveAwareness(cached);
+      if (fresh.outlooks.length) setOutlooks(fresh.outlooks);
+      if (fresh.regional.length) setRegional(fresh.regional);
+      awarenessAt.current = cached.timestamp;
+    } catch {
+      // Cache read is best-effort; the sweep below is the real source.
+    }
   }, []);
 
   useEffect(() => {
     if (!coords) return;
-    void refreshAwareness();
+    void (async () => {
+      await hydrateAwareness();
+      await refreshAwareness();
+    })();
     const timer = setInterval(() => void refreshAwareness(), AWARENESS_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [coords, refreshAwareness]);
+  }, [coords, hydrateAwareness, refreshAwareness]);
 
-  useOnAppResume(() => void refreshAwareness());
+  useOnAppResume(() => {
+    void (async () => {
+      await hydrateAwareness();
+      await refreshAwareness();
+    })();
+  });
 
   useEffect(() => {
     let cancelled = false;
+    // Registered on every launch, independent of settings and of whether the
+    // first fetch succeeds: this is what fills the cache read just below, so
+    // the next launch has content before the network is touched.
+    void syncBackgroundWeatherTask();
     (async () => {
-      const [storedSettings, storedLocations, storedSelected, perm, cached] = await Promise.all([
+      const [storedSettings, storedLocations, storedSelected, perm, cached, cachedAwareness] = await Promise.all([
         loadSettings(),
         loadSavedLocations(),
         loadSelectedLocationId(),
@@ -390,6 +517,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           'Location permission timed out.',
         ).catch(() => ({ status: Location.PermissionStatus.UNDETERMINED })),
         loadWeatherCache(),
+        loadAwarenessCache(),
       ]);
       if (cancelled) return;
       setSettings(storedSettings);
@@ -401,11 +529,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // task) so the user sees content the moment the app opens.
       if (cached && cached.selectedId === storedSelected) {
         setWeather(cached.bundle);
+        alertSnapshot.current = {
+          selectedId: cached.selectedId,
+          snapshot: {
+            alerts: cached.bundle.alerts,
+            verifiedAt: cached.bundle.alertsVerifiedAt,
+          },
+        };
         setPlaceName(cached.placeName);
         setPlaceSubtitle(cached.placeSubtitle);
         setCoords({ latitude: cached.latitude, longitude: cached.longitude });
         setLastUpdated(new Date(cached.timestamp));
         setLoading(false);
+
+        // The Storms tab is warmed from the same launch, so it is populated if
+        // the user opens it before the first sweep of this session lands.
+        if (cachedAwareness) {
+          const moved =
+            Math.abs(cachedAwareness.latitude - cached.latitude) > AWARENESS_CACHE_RADIUS_DEG ||
+            Math.abs(cachedAwareness.longitude - cached.longitude) > AWARENESS_CACHE_RADIUS_DEG;
+          if (!moved) {
+            const fresh = liveAwareness(cachedAwareness);
+            if (fresh.outlooks.length) setOutlooks(fresh.outlooks);
+            if (fresh.regional.length) setRegional(fresh.regional);
+            awarenessAt.current = cachedAwareness.timestamp;
+          }
+        }
       }
 
       try {
@@ -449,7 +598,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const next = typeof patch === 'function' ? patch(settings) : { ...settings, ...patch };
       setSettings(next);
       await saveSettings(next);
-      void syncBackgroundWeatherTask(next.alerts);
       if (weather) {
         if (alertsEnabled(next.alerts)) {
           await ensureNotificationSetup();
