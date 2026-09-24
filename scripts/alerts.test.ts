@@ -5,8 +5,8 @@
  * confirmed. It is never evidence that they are still in effect, because a
  * cancellation is invisible from the cached copy — a canceled warning keeps
  * whatever future end time it was issued with. These assertions pin down the
- * three rules that follow from that, and in particular guard against the two
- * failure modes that matter:
+ * rules that follow from that — including the four distinct states the UI can
+ * report — and guard against the two failure modes that matter:
  *
  *   false negative — a live warning disappearing because a request failed
  *   false positive — a withdrawn warning still presented as currently confirmed
@@ -22,7 +22,13 @@ import {
 } from '../lib/weather';
 import type { WeatherAlert } from '../lib/types';
 
+/** Confidence for a set confirmed at `verifiedAt`, after an attempt finished. */
+function confidence(verifiedAt: number, attempted = true, at = Date.now()) {
+  return alertConfidence({ verifiedAt, attempted }, at);
+}
+
 const MIN = 60_000;
+const HOUR = 60 * MIN;
 const now = Date.now();
 
 let failures = 0;
@@ -76,7 +82,7 @@ console.log('\na failure with nothing cached yet claims nothing');
   const next = nextAlertSnapshot(null, failed(), now);
   check('no alerts are invented', next.alerts.length === 0);
   check('and the set is marked never-confirmed', next.verifiedAt === 0);
-  check('which reads as unconfirmed', alertConfidence(next.verifiedAt, now) === 'unconfirmed');
+  check('which reads as unavailable once attempted', confidence(0, true, now) === 'unavailable');
 }
 
 // --- only a successful fetch may remove an alert ---------------------------
@@ -90,7 +96,7 @@ console.log('\nonly a successful fetch may remove an alert');
   const cleared = nextAlertSnapshot(previous, ok([]), now);
   check('a confirmed empty response clears the warning', cleared.alerts.length === 0);
   check('and stamps a fresh confirmation', cleared.verifiedAt === now);
-  check('so the UI treats it as current', alertConfidence(cleared.verifiedAt, now) === 'confirmed');
+  check('so the UI treats it as current', confidence(cleared.verifiedAt, true, now) === 'confirmed');
 }
 
 console.log('\na canceled warning is not inferable from the cached copy');
@@ -106,7 +112,7 @@ console.log('\na canceled warning is not inferable from the cached copy');
   check('it is still shown rather than silently dropped', next.alerts.length === 1);
   check(
     'but it is no longer presented as confirmed',
-    alertConfidence(next.verifiedAt, now) === 'unconfirmed',
+    confidence(next.verifiedAt, true, now) === 'stale',
   );
 }
 
@@ -114,16 +120,74 @@ console.log('\na canceled warning is not inferable from the cached copy');
 
 console.log('\nconfirmation decays with age, not with the alert');
 {
-  check('a just-fetched set is confirmed', alertConfidence(now, now) === 'confirmed');
+  check('a just-fetched set is confirmed', confidence(now, true, now) === 'confirmed');
   check(
     'still confirmed at the edge of the window',
-    alertConfidence(now - ALERT_CONFIRMED_MS, now) === 'confirmed',
+    confidence(now - ALERT_CONFIRMED_MS, true, now) === 'confirmed',
   );
   check(
-    'unconfirmed one minute past it',
-    alertConfidence(now - ALERT_CONFIRMED_MS - MIN, now) === 'unconfirmed',
+    'stale one minute past it',
+    confidence(now - ALERT_CONFIRMED_MS - MIN, true, now) === 'stale',
   );
-  check('never-confirmed is unconfirmed', alertConfidence(0, now) === 'unconfirmed');
+}
+
+console.log('\nthe window clears the foreground refresh cadence');
+{
+  // The ten-minute auto-refresh ticks once a minute, so a window of exactly
+  // ten minutes guaranteed a stale flicker before every renewal. Anything
+  // inside the cadence plus a tick must still read as confirmed.
+  check('fifteen minutes, not ten', ALERT_CONFIRMED_MS === 15 * 60_000);
+  check(
+    'a set renewed on the normal cadence never flickers',
+    confidence(now - 11 * MIN, true, now) === 'confirmed',
+    'eleven minutes is one refresh cadence plus a timer tick',
+  );
+}
+
+// --- the four states are genuinely distinct ------------------------------
+
+console.log('\na cold start is not an outage');
+{
+  check(
+    'nothing confirmed and no attempt finished reads as checking',
+    confidence(0, false, now) === 'checking',
+  );
+  check(
+    'the same state after a failed attempt reads as unavailable',
+    confidence(0, true, now) === 'unavailable',
+  );
+  check(
+    'and those are different claims',
+    confidence(0, false, now) !== confidence(0, true, now),
+    'a first load must not be reported as the alert feed being down',
+  );
+}
+
+console.log('\nthe full lifecycle walks all four states');
+{
+  // checking → confirmed → stale → confirmed, which is what a device does
+  // across a cold start, a good fetch, a quiet hour, and a recovery.
+  check('1. cold start', confidence(0, false, now) === 'checking');
+  check('2. first success', confidence(now, true, now) === 'confirmed');
+  check('3. ages out', confidence(now - 20 * MIN, true, now) === 'stale');
+  check('4. recovery re-confirms', confidence(now, true, now) === 'confirmed');
+
+  // And the branch that never reaches a confirmation.
+  check('cold start whose attempt failed', confidence(0, true, now) === 'unavailable');
+}
+
+console.log('\nattempted is only consulted when nothing was ever confirmed');
+{
+  // Once something has been confirmed, whether the latest attempt finished is
+  // irrelevant — age alone decides.
+  check(
+    'a confirmed set ignores the attempt flag',
+    confidence(now, false, now) === confidence(now, true, now),
+  );
+  check(
+    'a stale set ignores it too',
+    confidence(now - HOUR, false, now) === confidence(now - HOUR, true, now),
+  );
 }
 
 console.log('\nswitching places never inherits the previous place’s alerts');

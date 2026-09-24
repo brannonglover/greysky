@@ -55,6 +55,12 @@ type AppState = {
   error: string | null;
   permission: PermissionState;
   lastUpdated: Date | null;
+  /**
+   * Whether an attempt to confirm the alert set has finished this session,
+   * successfully or not. Separates a cold start from an outage: until this is
+   * true and nothing has ever been confirmed, the app is still checking.
+   */
+  alertsAttempted: boolean;
   coords: { latitude: number; longitude: number } | null;
   sky: SkyPalette;
   /** Active tropical cyclones with this location's exposure resolved. */
@@ -146,6 +152,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [permission, setPermission] = useState<PermissionState>(Location.PermissionStatus.UNDETERMINED);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [alertsAttempted, setAlertsAttempted] = useState(false);
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [tropical, setTropical] = useState<TropicalReport[]>([]);
   const [tropicalLoading, setTropicalLoading] = useState(false);
@@ -176,6 +183,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         fetchForecast(latitude, longitude),
         fetchAlerts(latitude, longitude),
       ]);
+      // Resolved either way, so the app is no longer merely "checking".
+      setAlertsAttempted(true);
       if (forecastResult.status === 'rejected') throw forecastResult.reason;
 
       const previous =
@@ -259,6 +268,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         await loadCurrentGps();
       } catch (err) {
+        // Permission or GPS failures never reach NWS, but the user has still
+        // been told everything the app knows — leaving them on "checking"
+        // forever would be its own kind of dishonesty.
+        setAlertsAttempted(true);
         setError(err instanceof Error ? err.message : 'Could not load weather.');
       } finally {
         setLoading(false);
@@ -675,6 +688,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       error,
       permission,
       lastUpdated,
+      alertsAttempted,
       coords,
       sky,
       tropical,
@@ -693,6 +707,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       addSavedLocation,
+      alertsAttempted,
       coords,
       error,
       lastUpdated,

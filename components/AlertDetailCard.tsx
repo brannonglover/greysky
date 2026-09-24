@@ -42,7 +42,11 @@ export function AlertDetailCard({ alert, confidence = 'confirmed', verifiedAt = 
   const tone = severityTone(alert.severity);
   const until = window(alert);
   const body = alert.description.trim() || alert.headline;
-  const stale = confidence === 'unconfirmed';
+  // Anything other than a fresh confirmation gets the notice. The alert keeps
+  // its event name, its palette and its border — it is a real NWS product and
+  // must stay as prominent as one. What changes is that the card stops
+  // implying the app knows it is still in effect.
+  const stale = confidence !== 'confirmed';
 
   return (
     <View style={[styles.card, { borderColor: tone }]}>
@@ -71,11 +75,19 @@ export function AlertDetailCard({ alert, confidence = 'confirmed', verifiedAt = 
       </View>
 
       {stale ? (
-        <Text style={styles.unverified}>
-          {verifiedAt
-            ? `Last confirmed ${formatClock(new Date(verifiedAt).toISOString())}. The Weather Service may have updated or canceled it since.`
-            : 'Not yet confirmed with the Weather Service.'}
-        </Text>
+        <View style={[styles.verification, { borderColor: tone }]}>
+          <View style={styles.verificationHead}>
+            <Ionicons name="time-outline" size={14} color={tone} />
+            <Text style={[styles.verificationTitle, { color: tone }]}>
+              {verifiedAt
+                ? `Last confirmed ${formatClock(new Date(verifiedAt).toISOString())}`
+                : 'Not yet confirmed'}
+            </Text>
+          </View>
+          <Text style={styles.verificationBody}>
+            The Weather Service may have updated or canceled this alert since.
+          </Text>
+        </View>
       ) : null}
 
       {open && body ? <Text style={styles.body}>{body}</Text> : null}
@@ -126,12 +138,30 @@ const styles = StyleSheet.create({
     fontFamily: fonts.mono,
     fontSize: 11,
   },
-  unverified: {
-    color: colors.textTertiary,
+  verification: {
+    marginTop: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 11,
+    borderRadius: radii.control,
+    borderCurve: 'continuous',
+    borderWidth: hairline,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    gap: 3,
+  },
+  verificationHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  verificationTitle: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+  },
+  verificationBody: {
+    color: colors.textSecondary,
     fontFamily: fonts.body,
-    fontSize: 11.5,
-    lineHeight: 16,
-    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 17,
   },
   body: {
     color: colors.textSecondary,

@@ -1,7 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import React, { useCallback, useMemo } from 'react';
-import { Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AlertDetailCard } from '@/components/AlertDetailCard';
@@ -39,6 +47,7 @@ export default function StormsScreen() {
     refresh,
     refreshTropical,
     refreshAwareness,
+    alertsAttempted,
   } = useApp();
 
   const onRefresh = useCallback(() => {
@@ -64,8 +73,10 @@ export default function StormsScreen() {
   // original end time. Everything else on this screen either expires on a
   // published schedule or is derived from forecast data the app already holds.
   const alertsVerifiedAt = weather?.alertsVerifiedAt ?? 0;
-  const alertsConfidence = alertConfidence(alertsVerifiedAt);
-  const alertsStale = alertsConfidence === 'unconfirmed';
+  const alertsConfidence = alertConfidence({
+    verifiedAt: alertsVerifiedAt,
+    attempted: alertsAttempted,
+  });
   const confirmedClock = alertsVerifiedAt
     ? formatClock(new Date(alertsVerifiedAt).toISOString())
     : null;
@@ -129,27 +140,34 @@ export default function StormsScreen() {
 
           {quiet ? (
             <View style={styles.empty}>
-              <Ionicons
-                name={alertsStale ? 'alert-circle-outline' : 'checkmark-circle-outline'}
-                size={34}
-                color={alertsStale ? colors.textTertiary : colors.precip}
-              />
               {/*
-                An all-clear is a claim, and it must not be made on the strength
-                of a failed request. When the alert feed could not be re-checked
-                the screen says what it actually knows and when it knew it,
-                rather than reporting an outage as safety.
+                Four distinct claims, and they must not share a rendering. An
+                all-clear cannot be made on the strength of a request that
+                failed — but neither should a cold start be reported as an
+                outage, which is what happens when "not checked yet" and
+                "checked and could not reach them" look the same.
               */}
-              {!alertsStale ? (
+              {alertsConfidence === 'checking' ? (
                 <>
+                  <ActivityIndicator color={colors.textTertiary} />
+                  <Text style={styles.emptyTitle}>Checking for alerts</Text>
+                  <Text style={styles.emptyBody}>
+                    Looking up official alerts, the severe-weather outlook, and any tropical
+                    systems for {placeName}.
+                  </Text>
+                </>
+              ) : alertsConfidence === 'confirmed' ? (
+                <>
+                  <Ionicons name="checkmark-circle-outline" size={34} color={colors.precip} />
                   <Text style={styles.emptyTitle}>Nothing active for {placeName}</Text>
                   <Text style={styles.emptyBody}>
                     No official alerts, no severe-weather outlook, no strong storms in the
                     forecast, and no tropical system expected to reach you.
                   </Text>
                 </>
-              ) : confirmedClock ? (
+              ) : alertsConfidence === 'stale' && confirmedClock ? (
                 <>
+                  <Ionicons name="time-outline" size={34} color={colors.textTertiary} />
                   <Text style={styles.emptyTitle}>Nothing active as of {confirmedClock}</Text>
                   <Text style={styles.emptyBody}>
                     No severe-weather outlook, no strong storms in the forecast, and no tropical
@@ -159,11 +177,12 @@ export default function StormsScreen() {
                 </>
               ) : (
                 <>
+                  <Ionicons name="alert-circle-outline" size={34} color={colors.textTertiary} />
                   <Text style={styles.emptyTitle}>Alert status unavailable</Text>
                   <Text style={styles.emptyBody}>
                     No severe-weather outlook, no strong storms in the forecast, and no tropical
                     system expected to reach you — but the Weather Service alert feed could not be
-                    reached, so this is not an all-clear. Pull to refresh.
+                    checked, so this is not an all-clear. Pull to refresh.
                   </Text>
                 </>
               )}
@@ -172,7 +191,11 @@ export default function StormsScreen() {
 
           {active.length > 0 ? (
             <>
-              <Text style={styles.section}>Active alerts</Text>
+              <Text style={styles.section}>
+                {alertsConfidence === 'stale' && active.some((item) => item.source === 'nws')
+                  ? 'Last known alerts'
+                  : 'Active alerts'}
+              </Text>
               {active.map((item) => render(item))}
             </>
           ) : null}

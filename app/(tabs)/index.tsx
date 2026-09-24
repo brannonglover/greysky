@@ -115,6 +115,7 @@ export default function ForecastScreen() {
     tropical,
     refresh,
     requestPermission,
+    alertsAttempted,
   } = useApp();
   const radar = useRadarAtPoint(coords);
 
@@ -222,7 +223,10 @@ export default function ForecastScreen() {
               />
               <AlertBanner
                 items={stormItems}
-                confidence={alertConfidence(weather.alertsVerifiedAt)}
+                confidence={alertConfidence({
+                  verifiedAt: weather.alertsVerifiedAt,
+                  attempted: alertsAttempted,
+                })}
                 verifiedAt={weather.alertsVerifiedAt}
               />
               {urgent ? map : null}

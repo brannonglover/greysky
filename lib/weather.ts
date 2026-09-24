@@ -406,18 +406,57 @@ export type AlertSnapshot = {
 /**
  * How long an alert set is treated as currently confirmed.
  *
- * Matched to the foreground refresh cadence: inside this window the app has
- * either just fetched or is about to, so the displayed set is as current as
- * the app is capable of being. Past it, the set is still shown — hiding a
- * possible warning is the worse error — but labelled as last-known.
+ * Deliberately longer than the ten-minute foreground refresh cadence. When the
+ * two were equal, a perfectly healthy app dropped into the last-known wording
+ * for up to a minute out of every ten — the refresh timer ticks once a minute,
+ * so the set always aged past the window before the refresh that would renew
+ * it fired. The extra five minutes absorb that jitter without weakening the
+ * claim: data five minutes either side of the cadence is no less confirmed.
  */
-export const ALERT_CONFIRMED_MS = 10 * 60_000;
+export const ALERT_CONFIRMED_MS = 15 * 60_000;
 
-export type AlertConfidence = 'confirmed' | 'unconfirmed';
+/**
+ * What the app can currently say about its alert set.
+ *
+ * Four states, because "we have not checked yet" and "we checked and could not
+ * reach them" are different claims and must not render identically — the first
+ * is a cold start, the second is an outage.
+ */
+export type AlertConfidence =
+  /** No authoritative answer yet, and the first attempt is still outstanding. */
+  | 'checking'
+  /** Confirmed against NWS within the window. */
+  | 'confirmed'
+  /** Confirmed at some point, but not recently enough to assert it still holds. */
+  | 'stale'
+  /** Never confirmed, and the attempt that would have confirmed it has finished. */
+  | 'unavailable';
 
-export function alertConfidence(verifiedAt: number, now: number = Date.now()): AlertConfidence {
-  if (!verifiedAt) return 'unconfirmed';
-  return now - verifiedAt <= ALERT_CONFIRMED_MS ? 'confirmed' : 'unconfirmed';
+export type AlertVerification = {
+  /** When NWS last confirmed the set; 0 if it never has. */
+  verifiedAt: number;
+  /**
+   * Whether an attempt to confirm has finished, successfully or not. Only
+   * consulted when nothing has ever been confirmed — it is what separates a
+   * cold start from an outage.
+   */
+  attempted: boolean;
+};
+
+export function alertConfidence(
+  verification: AlertVerification,
+  now: number = Date.now(),
+): AlertConfidence {
+  const { verifiedAt, attempted } = verification;
+  // A successful fetch always stamps verifiedAt, so reaching here with zero
+  // means no fetch has ever succeeded.
+  if (!verifiedAt) return attempted ? 'unavailable' : 'checking';
+  return now - verifiedAt <= ALERT_CONFIRMED_MS ? 'confirmed' : 'stale';
+}
+
+/** Whether the set is shown as current, as opposed to last-known or absent. */
+export function alertsAreCurrent(confidence: AlertConfidence): boolean {
+  return confidence === 'confirmed';
 }
 
 /**

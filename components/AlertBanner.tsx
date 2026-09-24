@@ -44,9 +44,13 @@ export function AlertBanner({ items, confidence = 'confirmed', verifiedAt = 0 }:
   // Only official products carry a confirmation time — derived signals are
   // computed from the forecast the app already holds, so there is nothing to
   // re-check them against.
+  // Shares alertConfidence and ALERT_CONFIRMED_MS with the Storms tab, so the
+  // two screens cannot make different claims about the same cached alert. Only
+  // 'stale' can appear beside an alert: the other two non-confirmed states mean
+  // nothing was ever confirmed, and an unconfirmed set has no alerts in it.
   const asOf =
-    official && confidence === 'unconfirmed' && verifiedAt
-      ? `as of ${formatClock(new Date(verifiedAt).toISOString())}`
+    official && confidence === 'stale' && verifiedAt
+      ? `Last confirmed ${formatClock(new Date(verifiedAt).toISOString())}`
       : null;
 
   return (
