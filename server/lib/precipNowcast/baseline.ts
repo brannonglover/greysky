@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { observedTimes, selectObserved } from '../mrms';
@@ -11,6 +11,7 @@ import { hrrrLeadRates } from './hrrrPoint';
 import { nearestIso, sampleMrmsPoint, type PointRate } from './mrmsPoint';
 import { openMeteoLeads } from './openMeteo';
 import { predictionFromRates, type LeadInput } from './predict';
+import { regionalForecast } from './regional';
 import {
   SCHEMA_VERSION,
   serializeRecord,
@@ -67,8 +68,9 @@ async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T) =
 }
 
 /**
- * Hindcast the four current predictors at one shared MRMS issue time, late
- * enough that +60 minutes is already observed. Does not change the map.
+ * Hindcast persistence, global advection, regional motion, HRRR, and Open-Meteo
+ * at one shared MRMS issue time, late enough that +60 minutes is already observed.
+ * Does not change the map.
  */
 export async function runBaseline(options?: {
   cases?: readonly BenchmarkCase[];
@@ -190,6 +192,40 @@ export async function runBaseline(options?: {
       }),
     );
 
+    const regional = await regionalForecast({
+      latitude: benchmark.latitude,
+      longitude: benchmark.longitude,
+      issuedAtMs: issueMs,
+      times,
+    }).catch((error: unknown) => ({
+      analysisRateMmHr: null as number | null,
+      analysisValidAt: issuedAt,
+      leads: leadTargets.map((lead) => ({
+        leadMinutes: lead.leadMinutes,
+        validAt: lead.validAt,
+        rainRateMmHr: null as number | null,
+      })),
+      diagnostics: { error: error instanceof Error ? error.message : 'Regional motion failed' },
+    }));
+    predictions.push(
+      predictionFromRates({
+        predictorId: 'regional-motion',
+        issuedAt,
+        latitude: benchmark.latitude,
+        longitude: benchmark.longitude,
+        caseId: benchmark.id,
+        intendedRegime: benchmark.intendedRegime,
+        analysisValidAt: regional.analysisValidAt,
+        analysisRateMmHr: regional.analysisRateMmHr,
+        leads: regional.leads.map((lead) => ({
+          leadMinutes: lead.leadMinutes,
+          validAt: lead.validAt,
+          rateMmHr: lead.rainRateMmHr,
+        })),
+        diagnostics: regional.diagnostics,
+      }),
+    );
+
     const hrrr = await hrrrLeadRates({
       latitude: benchmark.latitude,
       longitude: benchmark.longitude,
@@ -250,11 +286,14 @@ export async function runBaseline(options?: {
   return { issuedAt, predictions, observations, scorecards };
 }
 
-export function writeBaselineFiles(dir: string, run: BaselineRun): void {
+export function writeBaselineFiles(dir: string, run: BaselineRun, options?: { append?: boolean }): void {
   mkdirSync(dir, { recursive: true });
   const dump = (name: string, rows: readonly (PredictionRecord | ObservationRecord | Scorecard)[]) => {
     const body = rows.map((row) => serializeRecord(row)).join('\n');
-    writeFileSync(join(dir, name), rows.length ? `${body}\n` : '');
+    const file = join(dir, name);
+    const text = rows.length ? `${body}\n` : '';
+    if (options?.append) appendFileSync(file, text);
+    else writeFileSync(file, text);
   };
   dump('predictions.jsonl', run.predictions);
   dump('observations.jsonl', run.observations);

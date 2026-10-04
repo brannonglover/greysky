@@ -1,6 +1,6 @@
 # Probabilistic precipitation nowcast
 
-This is the design and phase contract. The visual radar pipeline stays as described in [radar.md](radar.md). Phase 1 adds a side scoreboard only. It does not change forecast wording and it does not start Phase 2.
+This is the design and phase contract. The visual radar pipeline stays as described in [radar.md](radar.md). Phase 1 and Phase 2 are side scoreboards only. They do not change forecast wording. Phase 3 has not started.
 
 The visual MRMS/HRRR map stays as it is. The new system is a point forecast beside it. Phase 1 is the scoreboard for the predictors that exist today.
 
@@ -189,3 +189,15 @@ Schema version is `1`. A reader must reject any other `schemaVersion`. Rows are 
 `recordType: "scorecard"` splits hits, false alarms, misses, correct rejections, Brier score, rain-rate MAE, and sample count by lead. Onset and ending report matched count, MAE in minutes, and unmatched counts. A pair is timed only when both series can answer the question.
 
 The fixed cases live in `server/lib/precipNowcast/cases.ts`. Phase 1 code is the `server/lib/precipNowcast/` scoreboard plus `server/scripts/nowcast-score.test.ts` and `server/scripts/nowcast-baseline.ts`. The file list earlier in this document is the later nowcaster, not this phase.
+
+## Phase 2 records
+
+`predictorId: "regional-motion"` version `regional-motion-1` is added beside `mrms-advection`. Schema version stays 1. The same observations and the same five leads are scored. Brier is stored as a deterministic 0/1 and is not the objective.
+
+The field is a 3° equirectangular region, 160×160, filled from the styled `conus_cref_qcd` composite through the existing palette and Marshall-Palmer conversion. Transparent pixels are empty. Off-palette and failed samples are missing. Neither is stored as 0 mm/hr. History is up to 8 real frames from the previous 15 minutes. A failed frame is skipped. Pairs closer than 30 seconds or farther than 300 seconds are rejected.
+
+Motion is block pyramidal Lucas-Kanade on rain rate, 16-pixel blocks, mean-normalised so a uniform brightening is not motion. A block needs support, a minimum structure-tensor eigenvalue, and a residual under 0.55 to count as solved. Unknown blocks take an inverse-distance fill from the better-textured solved vectors within 72 pixels, then the median of those vectors. A measured stationary echo stays a solved zero. An empty sample with no velocity stays empty, because every displacement of empty is empty. Echo with no velocity stays missing. Extrapolation is a backward trace of rain rate, bilinear, with no growth or decay.
+
+Internal lead step is 2 minutes. On a synthetic moving cell the rule was: rain-rate MAE within 0.5 mm/hr of a 1-minute trace, and core arrival shifted by at most 2 minutes. Five minutes missed that rule (MAE 1.45 mm/hr, onset shift 1 minute). Two minutes passed (MAE 0.41 mm/hr, onset shift 0). A full 96×96 trace at 30 minutes took 22 ms at a 1-minute step, 7 ms at 2 minutes, and 4 ms at 5 minutes, so the choice is the rate error, not the CPU time.
+
+`npm run nowcast:baseline -- --expand` scores six extra cities into `server/.nowcast-out/expanded` and does not mix them into the six-case table. `--issue` replays one time. `--append` adds to the local JSONL. Labels are not rewritten after a run.

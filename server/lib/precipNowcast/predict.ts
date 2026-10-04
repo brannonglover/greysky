@@ -7,6 +7,7 @@ export const PREDICTOR_VERSION: Record<PredictorId, string> = {
   'mrms-advection': 'mrms-advection-1',
   hrrr: 'hrrr-1',
   'open-meteo': 'open-meteo-1',
+  'regional-motion': 'regional-motion-1',
 };
 
 export type LeadInput = {

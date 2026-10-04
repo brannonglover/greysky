@@ -56,3 +56,52 @@ export const BENCHMARK_CASES: readonly BenchmarkCase[] = [
     note: 'Upper Texas coast. Broad rain is common in a Gulf fetch.',
   },
 ];
+
+/**
+ * Extra live points for later collection. Not part of the six-case Phase 1
+ * table. Labels say why the city was added. They are not changed after a run.
+ */
+export const EXPANDED_CASES: readonly BenchmarkCase[] = [
+  {
+    id: 'miami',
+    latitude: 25.7617,
+    longitude: -80.1918,
+    intendedRegime: 'convective',
+    note: 'South Florida. Sea-breeze and afternoon cells.',
+  },
+  {
+    id: 'chicago',
+    latitude: 41.8781,
+    longitude: -87.6298,
+    intendedRegime: 'widespread',
+    note: 'Southern Lake Michigan. Broad rain or a line moving off the plains.',
+  },
+  {
+    id: 'portland-or',
+    latitude: 45.5152,
+    longitude: -122.6784,
+    intendedRegime: 'widespread',
+    note: 'Willamette Valley. Slow stratiform rain is common.',
+  },
+  {
+    id: 'amarillo',
+    latitude: 35.222,
+    longitude: -101.8313,
+    intendedRegime: 'convective',
+    note: 'Texas Panhandle. Isolated cells and organized lines both occur.',
+  },
+  {
+    id: 'denver',
+    latitude: 39.7392,
+    longitude: -104.9903,
+    intendedRegime: 'isolated',
+    note: 'Front Range. Small cells, often slow or terrain-tied.',
+  },
+  {
+    id: 'minneapolis',
+    latitude: 44.9778,
+    longitude: -93.265,
+    intendedRegime: 'widespread',
+    note: 'Upper Midwest. Long-lived shields and decaying areas.',
+  },
+];
