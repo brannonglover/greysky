@@ -24,6 +24,10 @@
     "api/v2/nowcast/point.ts": {
       "memory": 1024,
       "maxDuration": 30
+    },
+    "api/v2/nowcast/shadow.ts": {
+      "memory": 1024,
+      "maxDuration": 30
     }
   }
 }

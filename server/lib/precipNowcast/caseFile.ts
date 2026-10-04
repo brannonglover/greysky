@@ -124,9 +124,14 @@ export function writeBundle(dir: string, bundle: CaseBundle, fields: Observation
   fs.writeFileSync(path.join(dir, 'case.json'), JSON.stringify(bundle));
 }
 
-export function readBundle(dir: string): { bundle: CaseBundle; fields: ObservationField[] } {
+export function readCase(dir: string): CaseBundle {
   const bundle = JSON.parse(fs.readFileSync(path.join(dir, 'case.json'), 'utf8')) as CaseBundle;
   if (bundle.schemaVersion !== CASE_SCHEMA_VERSION) throw new Error(`Unsupported case schema ${bundle.schemaVersion}`);
+  return bundle;
+}
+
+export function readBundle(dir: string): { bundle: CaseBundle; fields: ObservationField[] } {
+  const bundle = readCase(dir);
   const fields = bundle.frames.map((frame) => readFrame(path.join(dir, frame.file), frame));
   return { bundle, fields };
 }
