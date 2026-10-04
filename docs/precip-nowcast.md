@@ -1,0 +1,191 @@
+# Probabilistic precipitation nowcast
+
+This is the design and phase contract. The visual radar pipeline stays as described in [radar.md](radar.md). Phase 1 adds a side scoreboard only. It does not change forecast wording and it does not start Phase 2.
+
+The visual MRMS/HRRR map stays as it is. The new system is a point forecast beside it. Phase 1 is the scoreboard for the predictors that exist today.
+
+## Current pipeline
+
+Two pipelines exist, and they do not meet.
+
+```mermaid
+flowchart LR
+  subgraph map [Visual radar]
+    WMS["MRMS WMS cref PNG"] --> Manifest["Frame manifest"]
+    WMS --> Shift["One CONUS shift"]
+    Shift --> Tiles["Advected tiles"]
+    HRRR["HRRR REFC GRIB"] --> Blend["Rain-rate blend after 15 min"]
+    Tiles --> Blend
+    Blend --> Map["Map animation"]
+  end
+  subgraph words [What the forecast says]
+    OM["Open-Meteo hourly and 15-min"] --> Copy["Overcast / Staying dry"]
+    Point["Point API: latest color plus HRRR"] --> Chart["Hourly chart intensity"]
+  end
+```
+
+
+
+**Observations.** [server/lib/mrms.ts](server/lib/mrms.ts) reads NOAA WMS layer `conus_cref_qcd`, the styled QC composite reflectivity (`MergedReflectivityQCComposite`). Cadence is about 2 minutes. The time dimension keeps roughly 2 hours. There is no Surface Precipitation Rate product. Rain rate is Marshall-Palmer applied after the fact (`Z = 200 R^1.6`) in [server/lib/reflectivity.ts](server/lib/reflectivity.ts).
+
+The map asks for the last 60 minutes at a 5-minute slot in [server/api/v2/radar/frames.ts](server/api/v2/radar/frames.ts). The device loads observed tiles straight from NOAA. The server only lists times.
+
+**Motion.** [server/lib/nowcast.ts](server/lib/nowcast.ts) downloads two CONUS PNGs at 640×320 (~10 km per pixel), builds a binary wet mask (`alpha > 40`), and brute-forces one integer shift over ±16 pixels by mask overlap. Lookback is 40 minutes (`MOTION_LOOKBACK_MIN`). That single `(u, v)` is applied everywhere. The overlap score is thrown away. If the pair is under 4 minutes apart, motion is reported as zero. Intermediate frames are not used.
+
+**Extrapolation.** Future frames are the newest PNG translated by `u * lead` and `v * lead`, every 5 minutes, out to 45 minutes ([server/lib/radar/providers/advection.ts](server/lib/radar/providers/advection.ts)). Sampling is backward and bilinear, but on dBZ, in `nowcastDbzAt`. It is one global translation, not a velocity field. Nothing grows or decays. The in-memory source cache holds 3 CONUS images (1600×800).
+
+**HRRR.** [server/lib/hrrr.ts](server/lib/hrrr.ts) range-fetches composite reflectivity `REFC` from the NOAA GRIB bucket, 15-minute steps, ~3 km grid. [server/lib/render.ts](server/lib/render.ts) samples the nearest cell, not bilinearly. Between steps, tiles blend those two dBZ grids linearly. [server/lib/gridCache.ts](server/lib/gridCache.ts) keeps 6 decoded grids (~15 MB, ~130 ms each).
+
+**Blend.** [server/lib/radar/transition.ts](server/lib/radar/transition.ts): pure advection through +15 min, rain-rate mix from +15 to +45, pure HRRR after that. If one side is missing, the other is used at full strength. Early HRRR weight was measured and rejected because it invents cells the radar does not see ([docs/radar.md](docs/radar.md)).
+
+**Point API, which is not the nowcast.** [server/api/radar/point.ts](server/api/radar/point.ts) samples the past 60 minutes of WMS color at one pixel (10-minute cadence) and future HRRR at the nearest cell. It does not advect. A failed color read becomes `dbz: null`, which the app turns into intensity 0. CDN cache is 120 seconds. The app polls it every 75 seconds from [lib/useRadarAtPoint.ts](lib/useRadarAtPoint.ts).
+
+**Words.** [lib/nowcast.ts](lib/nowcast.ts) (`nowcastSummary`, `rainStartsInMinutes`, `rainStopsInMinutes`) and [lib/rainOutlook.ts](lib/rainOutlook.ts) read Open-Meteo only. This morning at 30345, Open-Meteo was weather code 3 and 0 mm while MRMS at the same point was 50 dBZ. The map showed the cell. The hero said overcast and staying dry. Radar is only allowed to cancel rain animation, not to start it ([app/(tabs)/index.tsx](app/(tabs)/index.tsx)).
+
+**Refresh.** [lib/refreshWeatherCaches.ts](lib/refreshWeatherCaches.ts) coalesces forecast, alerts, SPC, and tropical fetches. It does not refresh radar or a nowcast. Radar caches are the in-process PNG and GRIB maps plus short CDN headers.
+
+## What to reuse
+
+- Marshall-Palmer conversion in [server/lib/reflectivity.ts](server/lib/reflectivity.ts). Do not add a second Z-R.
+- The backward-sampling geometry in `nowcastDbzAt`. The new sampler should interpolate rain rate, not dBZ. Leave the tile renderer alone.
+- `observedTimes` / `selectObserved` for frame discovery. The nowcaster should keep real timestamps instead of the 5-minute display slots.
+- HRRR `forecastFrames` and `gridForFrame` as an evolution hint, not as the position field.
+- Rain bands in [lib/precip.ts](lib/precip.ts): drizzle above 0.02 mm/hr, light 0.6, moderate 2.5, heavy 7.5, storm 25. Those become very light, light, moderate, heavy, very heavy. One definition, mirrored on the server the same way reflectivity already is. The server deploy cannot import app modules.
+- Provider seams in [server/lib/radar/types.ts](server/lib/radar/types.ts). The map does not need a new provider. pySTEPS is already noted in [docs/radar.md](docs/radar.md) and should stay out: it is Python, and this service is Node on Vercel with `pngjs`, `proj4`, and `gribberish` only.
+
+## Shortcomings of the current predictor
+
+- One velocity for the whole country. Cells moving different directions are averaged into one shift, or into zero when the shift is under a pixel.
+- Motion uses two binary masks about 40 minutes apart. A cell that formed in the last 10 minutes contributes nothing. The score is not a confidence.
+- Extrapolation cannot grow, decay, or initiate. Structure is frozen.
+- The forecast sentence never reads radar or the advection field.
+- The point sample is one pixel of styled color. A 2 km miss flips the forecast. Transparent pixels mix “no rain” and “no coverage.” A failed fetch becomes zero in the app.
+- HRRR is reflectivity, 15 minutes apart, nearest cell, and often empty in the first minutes of a new run. It is blended as a second position field, which is the wrong job inside 20 minutes.
+- There is no ensemble, no onset distribution, and no stored prediction to score later. “Better” can only be judged by looking at the animation.
+
+## Proposed architecture
+
+A new module, `server/lib/precipNowcast/`, produces a regional field once and samples it many times. The map keeps calling `nowcastFrames`.
+
+```mermaid
+flowchart TD
+  History["MRMS history about 12 min real timestamps"] --> Rate["Rain-rate grid with gaps marked"]
+  Rate --> Motion["Block Lucas-Kanade velocity field"]
+  Rate --> Evo["Coverage mean max centroid"]
+  Motion --> Extrap["Semi-Lagrangian 0 to 60 min"]
+  Evo --> Conf["Predictability score"]
+  Extrap --> Ens["24 coherent members"]
+  HRRR2["HRRR rate tendency"] --> Ens
+  Conf --> Ens
+  Ens --> Field["Cached probability and expected rate"]
+  Field --> Point["Neighborhood sample"]
+  Point --> Api["Onset ending minute series"]
+```
+
+
+
+**Field source.** Add an `ObservationField` interface: rain rate per cell, plus an explicit missing mask. The interface stays source-independent. Version 1 may fill it from a regional WMS GetMap (on the order of 400 km, about 1–2 km per pixel), inverted through the existing palette. Seven full CONUS precip-rate GRIB grids do not fit a serverless function (on the order of 100 MB decoded each). Palette inversion is integer dBZ, and inside the image a transparent pixel still means “nothing drawn,” not a proven coverage mask. Whether native MRMS Surface Precipitation Rate can replace styled-reflectivity, palette inversion, dBZ, and Marshall-Palmer is a separate investigation. It does not block Phase 1 and it does not change the radar source the map uses. The result of that investigation is recorded in the design contract. Verification still has to say whether the palette floor matters.
+
+Native MRMS Surface Precipitation Rate was checked on 4 Oct 2026 and is not wired in. `s3://noaa-mrms-pds/CONUS/PrecipRate_00.00/` publishes a gzipped GRIB2 about every 2 minutes. The 12:00 UTC file was 858 KB compressed and a 7000 by 3500 grid (0.01 degree). Packed data is under 1 MB, so bandwidth is fine, but decoding yields about 24.5 million values. A nowcaster must crop to a region before keeping several frames. `gribberish` can read GRIB2; the file is gzipped, so it is not a byte-range fetch like HRRR `REFC`. Phase 1 still verifies against the styled composite the app already uses.
+
+**History.** Use the live ~2-minute cadence, targeting about seven frames over ~12 minutes. Missing slots stay missing. Do not write zero into a gap, and do not run motion across a gap wider than a configured maximum.
+
+**Motion.** Block pyramidal Lucas-Kanade on rain rate, in TypeScript, no new dependency. Blocks on the order of 16–32 pixels so different parts of the field can move differently. Timestamps set `dt`; do not assume a fixed interval. Each block keeps a residual so low-quality vectors can be dropped. This replaces the global shift only inside the new module. A velocity field is not accepted because it looks smooth. Phase 2 must recover known ground truth on synthetic fields: one translation, two regions moving different directions, stationary precipitation, translation with simultaneous growth or decay, missing or irregular frames, and low-intensity noise.
+
+**Extrapolation.** Backward trace along the velocity field, bilinear in rain rate. Do not lock the internal step to one minute before measuring it. Phase 2 benchmarks lead steps of 1, 2, and 5 minutes and keeps the cheapest step that does not materially change onset and ending error. The public point API can still return minute values by interpolation. Integer-pixel copies are not used.
+
+**Ensemble.** Default 24 members, configurable. Each member gets a coherent perturbation: one speed factor, one direction offset, a smooth local-velocity residual, one intensity scale, one growth bias. Same seed for a given observation time so a replay is stable. Do not add independent noise per pixel. Store per lead a probability and an expected rate, not 24 dense grids.
+
+**Evolution.** Connected components above the meaningful-rain threshold, regional only: area change, mean and max rate, centroid drift, how stable the motion field is, divergence. That separates steady approach, approach-and-die, and growth upstream. No full cell tracker.
+
+**HRRR.** Convert neighborhood REFC to rain rate with the same Z-R. Use the change in that rate as a growth/decay multiplier on the extrapolated radar field. From 0–20 minutes the multiplier stays near 1 unless radar confidence is poor. HRRR does not move the echo. Initiation is a probability lift when radar is dry, confidence is low, and HRRR develops rain. It is not a painted cell at +5 minutes.
+
+**Confidence.** One score from motion residual, frame completeness, age of the newest frame, intensity persistence, and growth rate. High confidence keeps radar in charge longer. Low confidence widens member spread and lets the HRRR tendency in sooner. All of those knobs live in one config module.
+
+**Neighborhood.** Sample a Gaussian around the point. Start at 5 km. Native MRMS is about 1 km, the regional image is about 1–2 km, and a 20% speed error on a 40 km/h cell is about 4 km at 30 minutes. Closer cells weigh more. Radius is config.
+
+**Point model.** New endpoint, old `/api/radar/point` unchanged:
+
+- `generatedAt`, `observationTime`, `confidence`
+- `minutes[]`: offset, probability, expected mm/hr, band, precip type
+- `onset` and `ending`: probability, p10, p50, p90 minutes
+- horizon probabilities at 10, 20, 30, 45, 60 minutes
+- `diagnostics` for age, frames used, motion quality, ensemble spread, HRRR weight
+
+Ending requires the neighborhood to stay under the meaningful-rain threshold for 8 minutes before that member counts as ended. One dry minute does not end the rain. An exact minute is returned only when p10 and p90 are close enough; otherwise the API still returns the distribution and the copy should say “about.”
+
+**Cache.** Key a regional field by a coarse tile id and observation time. Same pattern as `gridCache`: a few warm regions per instance. Point responses can use a short CDN cache. Do not compute an ensemble per coordinate.
+
+**Rough cost, per region, every 2–5 minutes.** About 7 WMS images of ~512² (~7 MB). Block LK is a few million operations, well under a second. Extrapolation of ~12 stored leads is the heavy step, on the order of 1–3 seconds if done once per region. Twenty-four members must share the base trajectory and apply low-dimensional perturbations while reducing to probability and mean rate, or the function will not fit. A full CONUS dense ensemble will not be built.
+
+## Files
+
+Add, and do not retarget the map through them:
+
+- `server/lib/precipNowcast/config.ts`
+- `server/lib/precipNowcast/field.ts`
+- `server/lib/precipNowcast/motion.ts`
+- `server/lib/precipNowcast/extrapolate.ts`
+- `server/lib/precipNowcast/evolution.ts`
+- `server/lib/precipNowcast/ensemble.ts`
+- `server/lib/precipNowcast/hrrr.ts`
+- `server/lib/precipNowcast/sample.ts`
+- `server/lib/precipNowcast/predict.ts`
+- `server/lib/precipNowcast/verify.ts`
+- `server/api/v2/nowcast/point.ts`
+- `server/scripts/nowcast-bench.ts` and `server/scripts/nowcast-verify.ts`
+
+Leave [server/lib/nowcast.ts](server/lib/nowcast.ts), the tile route, the frame manifest, and [server/api/radar/point.ts](server/api/radar/point.ts) behaving as they do now.
+
+Bands: extend the existing names in [lib/precip.ts](lib/precip.ts) only by aliasing very light = drizzle and very heavy = storm. Mirror the numbers in the server config and pin them with a test. Do not add new mm/hr floors.
+
+Client wording (`Rain likely in about 20 minutes`) is a later flagged read of the new endpoint. It does not replace Open-Meteo copy until verification says the new predictor is better. That wiring is out of the first algorithm phases.
+
+## Validation
+
+There is no durable disk on the serverless function. Phase 1 scores live or scripted replays to local JSONL. A Blob sink can come after the record format is stable.
+
+Each saved prediction stores time, predictor version, coordinate, confidence, minute probabilities, expected rates, and onset/ending percentiles. A later run scores it against the MRMS field at +10, +20, +30, +45, and +60.
+
+Metrics, by lead: rain/no-rain hit rate, false alarm, miss, Brier score, onset and ending error, rain-rate error. Regime tag from the evolution step: widespread versus convective (coverage versus peak rate). Predictors run side by side: persistence, today’s global advection sampled at the point, HRRR-only, and the new ensemble. No accuracy claim without that table.
+
+`predictor=baseline|ensemble` on the new endpoint. Default remains the current behavior everywhere the app reads today.
+
+## Constraints added before Phase 2
+
+- The visual radar pipeline stays untouched. Phase 1 adds a side scoreboard only.
+- Open-Meteo remains the production source for user-facing forecast wording until verification shows the new nowcaster is better.
+- Lucas-Kanade is not accepted on appearance. Phase 2 includes the synthetic motion tests listed above.
+- `ObservationField` stays source-independent. Native MRMS Surface Precipitation Rate is investigated and documented, not adopted in Phase 1.
+- Internal lead spacing is chosen by a 1-, 2-, and 5-minute benchmark in Phase 2. The point API may still interpolate to minutes.
+
+## Phase 1 contract
+
+Score persistence, global MRMS advection at the point, HRRR-only, and Open-Meteo (only when a past run can actually be retrieved) on the same coordinates and the same issue time. Rain/no-rain uses `DRY_MM_HR` from `lib/precip.ts` (0.02 mm/hr). Do not introduce a tighter threshold to flatter the current predictors.
+
+Records are schema version 1 JSONL on local disk. There is no production store. Leads are +10, +20, +30, +45, and +60 minutes. Metrics stay split by lead: hits, false alarms, misses, Brier score where a probability was stored, rain-rate error, onset error, ending error, and sample count. A null rate is missing data, not dry weather.
+
+The fixed case list is the replay set: desert dry, Pacific widespread, Atlanta 30345 convective, plains convective, Midwest isolated, Gulf widespread. The intended regime is a label on the case, not something rewritten after seeing the score.
+
+## Phases
+
+1. **Baseline.** Score the four current predictors and record schema version 1. No new forecast, no wording change, no map change.
+2. **Deterministic motion.** Multi-frame regional field, block Lucas-Kanade with synthetic ground truth, semi-Lagrangian extrapolation, and a measured choice among 1-, 2-, and 5-minute internal steps. Compare to phase 1 on the same cases.
+3. **Ensemble.** Coherent 24-member probabilities from that motion field. Still no HRRR tendency.
+4. **Point API.** Neighborhood sample, onset and ending distributions, diagnostics. Feature-flagged endpoint only.
+5. **HRRR tendency and confidence.** Growth/decay and earlier HRRR influence only when radar confidence is low.
+6. **Calibration.** Fit the config from accumulated scores. Do not tune by eye.
+
+Each phase has its own script and can be rejected without shipping the next one.
+
+## Phase 1 records
+
+Schema version is `1`. A reader must reject any other `schemaVersion`. Rows are JSONL. `server/.nowcast-out/` is local output and is not a production store.
+
+`recordType: "prediction"` carries `predictorId` (`persistence`, `mrms-advection`, `hrrr`, `open-meteo`), `predictorVersion`, shared `issuedAt`, `caseId`, `intendedRegime`, `rainThresholdMmHr` (0.02), `analysis.rainRateMmHr` (null if that predictor had no analysis), and five `leads` at 10, 20, 30, 45, and 60 minutes. Each lead has `precipProbability` (0–1 or null) and `expectedRainRateMmHr` (null means missing, not dry). `onset` and `ending` are `{ applicable, minutes }`. Scoring recomputes them from the rates.
+
+`recordType: "observation"` is MRMS `conus_cref_qcd` at the same `caseId` and `issuedAt`. `leadMinutes: 0` is the analysis frame. Truth rate is null only when the sample failed.
+
+`recordType: "scorecard"` splits hits, false alarms, misses, correct rejections, Brier score, rain-rate MAE, and sample count by lead. Onset and ending report matched count, MAE in minutes, and unmatched counts. A pair is timed only when both series can answer the question.
+
+The fixed cases live in `server/lib/precipNowcast/cases.ts`. Phase 1 code is the `server/lib/precipNowcast/` scoreboard plus `server/scripts/nowcast-score.test.ts` and `server/scripts/nowcast-baseline.ts`. The file list earlier in this document is the later nowcaster, not this phase.
