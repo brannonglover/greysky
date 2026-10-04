@@ -212,6 +212,8 @@ On the 12:12 UTC Atlanta replay the aligned history supported about 0.08 mm/hr o
 
 ## Phase 4 records
 
+Checkpoint: `c9c5fbc`.
+
 `GET /api/v2/nowcast/point` is schema version 1, predictor version `regional-ensemble-1`. It does not replace `/api/radar/point`. Query: `lat`, `lon`, optional `radiusKm` (default 2), `threshold` (default 0.6 mm/hr, the light band), `endingDryMin` (default 8), and `issuedAt` for a replay. The response is not cached on the CDN. The regional ensemble is cached in the process.
 
 `confidence` is one minus the Phase 3 uncertainty score. It is how predictable the analysis is. `minutes[].probability` is the share of members whose neighborhood rate meets a threshold. Those are different numbers.
@@ -221,3 +223,17 @@ Thresholds stay the Grey Sky bands: trace above 0.02 mm/hr, light at or above 0.
 The neighborhood is a Gaussian around the coordinate. Sigma is half the radius. The center plus two rings of eight bearings are normalized to sum to one. Radius 0 is the exact cell. Member motion perturbations are unchanged. The default radius is 2 km because three wet points cannot justify a wider footprint, and 3–5 km started to treat nearby heavier rain as rain at the point.
 
 The region key is the observation time, the predictor version, latitude rounded to 1°, and longitude rounded to 0.5°. Atlanta, Marietta, and downtown share one key on the 12:46 UTC issue. A half-degree latitude tile had put downtown in a different analysis.
+
+## Phase 5A records
+
+Checkpoint above is `c9c5fbc`. This phase does not change the point API, the map, or forecast wording. It does not put HRRR reflectivity into the ensemble, and it does not fit a score to Atlanta or Marietta.
+
+Cases live in `server/.nowcast-cases`, schema version 1, one directory per region and observation time. `case.json` holds the region key, predictor version, history counts, the point forecast, the 24 member rates at the native 2-minute steps, verifying MRMS rates, and environmental samples. Each MRMS frame is `frames/N.bin` (`NCF1`, width, height, cell state, float32 rain rate). A region is about 0.9 MB of fields. `npm run nowcast:capture -- --issue <ISO>` writes it. `npm run nowcast:replay -- --id <point> --predictor regional-ensemble-1|regional-motion-1` reruns that predictor on the saved fields after the MRMS archive has moved on. `npm run nowcast:calibrate` scores whatever has been stored. Intended regime labels are copied from the case list and are not rewritten after verification.
+
+The first stored hour is 2026-10-04T12:46:40Z, 14 points, 12 regions. The radar showed growing convection at Atlanta 30345 and Marietta, a trace at downtown, and dry weather at the other eleven points. No stratiform shield, line, decaying area, or stationary area was in this hour. The 12:12 UTC frames were already gone, so that earlier issue is not in the archive.
+
+Environmental samples are the HRRR 11Z run, surface forecast hour 1, valid 12:00 UTC, which was published before 12:46. Sub-hourly reflectivity is the same run at 12:15 and 12:45. RAP has the same surface fields at 13 km and was not decoded. At Atlanta, Marietta, and downtown the air was unstable and moist (surface CAPE about 830–1030 J/kg, CIN 0, precipitable water about 50 mm, dewpoint about 22°C, lifted index about −3). HRRR reflectivity was −10 dBZ and the model rain rate was 0 at 12:00 and at 12:45, so the model did not show the burst before it happened. Miami was more unstable (CAPE 2300 J/kg, lifted index −5.8) and stayed dry. Ten-metre convergence did not pick out the points that grew. Hourly-max vertical velocity in the lowest kilometre was about 0. Updraft helicity was 0. Those fields do not separate “this point will grow” from “this point will not” inside one unstable airmass, so there is no convective-vulnerability score. The raw samples stay on the case.
+
+Message sizes on that HRRR file, and the decode time when a field was fetched: surface CAPE 404 KB / 0.8 s, surface CIN 136 KB / 0.5 s, most-unstable CAPE 499 KB, precipitable water 972 KB, 2 m dewpoint 1.1 MB, lifted index 937 KB, precip rate 78 KB, hourly reflectivity 433 KB, categorical rain 65 KB, 1 km max vertical velocity 2.5 MB / 0.8 s, sub-hourly reflectivity about 0.5 MB, updraft helicity 37 KB. Ten-metre wind, fetched once for convergence, was 4.8 MB and 1.9 s for both components. Helicity and bulk shear are about 1.9–2.4 MB and were not fetched. One regional forecast can share a cached model hour across points. That is still several megabytes, which is too much to add to every nowcast until a field earns it.
+
+Calibration on these 70 leads is marked too small: 14 points, one hour, and only the Atlanta and Marietta leads are meaningfully wet. Dry points sit inside a narrow distribution and make coverage and light-rain Brier look better than the bursts were. The bursts remain outside p90. Middle reliability bins are empty.
