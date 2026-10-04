@@ -8,11 +8,12 @@
     "smoke": "tsx scripts/smoke.ts",
     "preview": "tsx scripts/radar-preview.ts",
     "verify": "tsx scripts/verify-phase1.ts",
-    "test": "tsx scripts/motion.test.ts && tsx scripts/hrrr-run.test.ts && tsx scripts/tropical.test.ts && tsx scripts/spc.test.ts && tsx scripts/nowcast-score.test.ts && tsx scripts/motion-synthetic.test.ts && tsx scripts/evolution-synthetic.test.ts && tsx scripts/nowcast-point.test.ts && tsx scripts/nowcast-case.test.ts",
+    "test": "tsx scripts/motion.test.ts && tsx scripts/hrrr-run.test.ts && tsx scripts/tropical.test.ts && tsx scripts/spc.test.ts && tsx scripts/nowcast-score.test.ts && tsx scripts/motion-synthetic.test.ts && tsx scripts/evolution-synthetic.test.ts && tsx scripts/nowcast-point.test.ts && tsx scripts/nowcast-case.test.ts && tsx scripts/nowcast-precursor.test.ts",
     "nowcast:point": "tsx scripts/nowcast-point-bench.ts",
     "nowcast:capture": "tsx scripts/nowcast-capture.ts",
     "nowcast:replay": "tsx scripts/nowcast-replay.ts",
     "nowcast:calibrate": "tsx scripts/nowcast-calibrate.ts",
+    "nowcast:precursors": "tsx scripts/nowcast-precursors.ts",
     "nowcast:baseline": "tsx scripts/nowcast-baseline.ts",
     "tropical:live": "tsx scripts/tropical-live.ts",
     "spc:live": "tsx scripts/spc-live.ts"
