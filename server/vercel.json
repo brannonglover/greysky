@@ -20,6 +20,10 @@
     "api/spc/outlook.ts": {
       "memory": 512,
       "maxDuration": 20
+    },
+    "api/v2/nowcast/point.ts": {
+      "memory": 1024,
+      "maxDuration": 30
     }
   }
 }

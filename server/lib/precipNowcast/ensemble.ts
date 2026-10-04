@@ -151,6 +151,41 @@ export function ensembleAtPoint(args: {
   return { leads, elapsedMs: Date.now() - started, memberCount: factors.length };
 }
 
+export type MemberSet = {
+  field: ObservationField;
+  evolution: EvolutionAnalysis;
+  factors: MemberFactor[];
+  motions: MotionField[];
+  uncertainty: number;
+  chunkSec: number;
+};
+
+/** Perturbed motions for one analysis. Callers sample many points from this set. */
+export function prepareMembers(
+  field: ObservationField,
+  motion: MotionField,
+  evolution: EvolutionAnalysis,
+  uncertainty: number,
+  chunkSec: number,
+): MemberSet {
+  const factors = memberFactors(uncertainty);
+  return {
+    field,
+    evolution,
+    factors,
+    motions: factors.map((factor) => perturbMotion(motion, factor)),
+    uncertainty,
+    chunkSec,
+  };
+}
+
+export function memberEvolvedRate(set: MemberSet, index: number, x: number, y: number, leadSec: number): number | null {
+  const traced = tracePixelSource(set.field, set.motions[index], x, y, leadSec, set.chunkSec);
+  if (traced.rainRateMmHr == null) return null;
+  const tendency = tendencyAtPixel(set.evolution, traced.x, traced.y) * set.factors[index].tendencyScale;
+  return applyEvolution(traced.rainRateMmHr, tendency, leadSec, EVOLUTION.halfLifeSec * set.factors[index].halfLifeScale);
+}
+
 export function analysisSample(field: ObservationField, latitude: number, longitude: number): number | null {
   const pixel = pixelOf(field.geometry, latitude, longitude);
   return sampleField(field, pixel.x, pixel.y).rainRateMmHr;

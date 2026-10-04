@@ -1,6 +1,6 @@
 # Probabilistic precipitation nowcast
 
-This is the design and phase contract. The visual radar pipeline stays as described in [radar.md](radar.md). Phase 1 and Phase 2 are side scoreboards only. They do not change forecast wording. Phase 3 has not started.
+This is the design and phase contract. The visual radar pipeline stays as described in [radar.md](radar.md). Phases 1–3 are scoreboards only. Phase 4 adds an internal point API. None of them change forecast wording.
 
 The visual MRMS/HRRR map stays as it is. The new system is a point forecast beside it. Phase 1 is the scoreboard for the predictors that exist today.
 
@@ -209,3 +209,15 @@ Internal lead step is 2 minutes. On a synthetic moving cell the rule was: rain-r
 Evolution is the residual after the Phase 2 velocity field aligns the older frame onto the newer one. A uniform translation leaves that residual near zero. Missing samples are skipped. A block tendency is clamped to 3 mm/hr per minute, then forgotten with a 12-minute half-life, and the forecast rate cannot exceed 75 mm/hr. Those limits were set before the Atlanta replay. Twenty-four members perturb that one analysis. They do not rerun optical flow. Speed, a cross-track component, the tendency, and the half-life are scaled together. The spread widens when few vectors are solved, pairs are rejected, or the tendency flips between frames. The Phase 2 block-quality number is not used as a probability.
 
 On the 12:12 UTC Atlanta replay the aligned history supported about 0.08 mm/hr of growth per minute. The ensemble mean stayed near 1 mm/hr and its 90th percentile at +45 was 1.2 mm/hr. The observed 49 mm/hr was outside that distribution. The growth was not in the prior frames.
+
+## Phase 4 records
+
+`GET /api/v2/nowcast/point` is schema version 1, predictor version `regional-ensemble-1`. It does not replace `/api/radar/point`. Query: `lat`, `lon`, optional `radiusKm` (default 2), `threshold` (default 0.6 mm/hr, the light band), `endingDryMin` (default 8), and `issuedAt` for a replay. The response is not cached on the CDN. The regional ensemble is cached in the process.
+
+`confidence` is one minus the Phase 3 uncertainty score. It is how predictable the analysis is. `minutes[].probability` is the share of members whose neighborhood rate meets a threshold. Those are different numbers.
+
+Thresholds stay the Grey Sky bands: trace above 0.02 mm/hr, light at or above 0.6, moderate at or above 2.5, heavy at or above 7.5. Onset and ending use member probability at the selected threshold, not the ensemble mean. A member onsets only after two native steps (4 minutes) stay at or above the line. A member ends only after the configured dry spell, default 8 minutes. A missing rate does not count as dry. Percentiles are omitted when fewer than three members have a time. Odd minutes are a linear blend of the 2-minute steps, and blended probabilities are rounded to two decimals.
+
+The neighborhood is a Gaussian around the coordinate. Sigma is half the radius. The center plus two rings of eight bearings are normalized to sum to one. Radius 0 is the exact cell. Member motion perturbations are unchanged. The default radius is 2 km because three wet points cannot justify a wider footprint, and 3–5 km started to treat nearby heavier rain as rain at the point.
+
+The region key is the observation time, the predictor version, latitude rounded to 1°, and longitude rounded to 0.5°. Atlanta, Marietta, and downtown share one key on the 12:46 UTC issue. A half-degree latitude tile had put downtown in a different analysis.
