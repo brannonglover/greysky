@@ -2,6 +2,7 @@
  * Capture one regional situation and replay a predictor on those stored fields.
  * Replay does not download MRMS. It uses the frames written at issue time.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { observedTimes } from '../mrms';
@@ -24,6 +25,7 @@ import type { BenchmarkCase } from './cases';
 import {
   bundleDir,
   readBundle,
+  readCase,
   writeBundle,
   type CaseBundle,
   type StoredPoint,
@@ -38,6 +40,11 @@ export async function captureRegion(args: {
   const observation = nearestIso(args.times, args.issuedAtMs, 4 * 60_000);
   if (!observation) return { dir: null, error: 'No MRMS frame within 4 minutes', bundle: null };
   const located = regionKey(args.points[0].latitude, args.points[0].longitude, observation);
+  const existing = bundleDir(located.key, observation);
+  if (fs.existsSync(path.join(existing, 'case.json'))) {
+    console.log(`already stored ${existing}`);
+    return { dir: existing, error: null, bundle: readCase(existing) };
+  }
   const history = await loadRegionalHistory(located.centerLatitude, located.centerLongitude, Date.parse(observation), args.times);
   if (history.frames.length < 2) return { dir: null, error: 'fewer than two usable frames', bundle: null };
 

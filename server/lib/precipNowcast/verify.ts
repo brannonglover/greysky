@@ -45,6 +45,9 @@ export type ArchivePoint = {
   observedOnsetMin: number | 'already' | null;
   observedEndingMin: number | null;
   leads: Array<{ leadMinutes: number; rainRateMmHr: number | null }>;
+  /** Largest |forecast − observed| on a lead that actually reached 0.6 mm/hr. */
+  maxWetAbsError: number | null;
+  leadsComplete: boolean;
 };
 
 function membersAt(point: StoredPoint, leadMinutes: number): number[] | null {
@@ -68,6 +71,13 @@ export function pointsFromBundle(bundle: CaseBundle): ArchivePoint[] {
       leadMinutes,
       rainRateMmHr: point.verification?.leads.find((lead) => lead.leadMinutes === leadMinutes)?.rainRateMmHr ?? null,
     }));
+    let maxWetAbsError: number | null = null;
+    for (const lead of leads) {
+      const expected = point.forecast?.minutes.find((minute) => minute.minute === lead.leadMinutes)?.expectedRainRateMmHr ?? null;
+      if (lead.rainRateMmHr == null || expected == null || lead.rainRateMmHr < POINT.eventThresholdMmHr) continue;
+      const error = Math.abs(expected - lead.rainRateMmHr);
+      if (maxWetAbsError == null || error > maxWetAbsError) maxWetAbsError = error;
+    }
     return {
       id: point.id,
       observationTime: bundle.observationTime,
@@ -80,6 +90,8 @@ export function pointsFromBundle(bundle: CaseBundle): ArchivePoint[] {
       observedOnsetMin: observedOnset(analysis, leads),
       observedEndingMin: observedEnding(analysis, leads),
       leads,
+      maxWetAbsError,
+      leadsComplete: leads.every((lead) => lead.rainRateMmHr != null),
     };
   });
 }
@@ -451,6 +463,57 @@ export function exampleFor(point: ArchivePoint, label: string): Record<string, u
     observedEndingMin: point.observedEndingMin,
     verdict,
   };
+}
+
+/** Future leads only. A null rate is missing, including after the source window has moved on. It is not a dry observation. */
+export type VerificationState = 'pending' | 'partial' | 'verified';
+
+export function verificationState(bundle: CaseBundle): VerificationState {
+  let numeric = 0;
+  let missing = 0;
+  for (const point of bundle.points) {
+    for (const leadMinutes of SCORE_LEADS_MIN) {
+      const rate = point.verification?.leads.find((lead) => lead.leadMinutes === leadMinutes)?.rainRateMmHr;
+      if (rate == null || !Number.isFinite(rate)) missing += 1;
+      else numeric += 1;
+    }
+  }
+  if (missing === 0 && numeric > 0) return 'verified';
+  if (numeric === 0) return 'pending';
+  return 'partial';
+}
+
+const RAIN_CALLS = new Set(['RAIN_POSSIBLE', 'RAIN_LIKELY', 'RAIN_IMMINENT', 'TIMING_UNCERTAIN']);
+const ENDING_CALLS = new Set(['ENDING_POSSIBLE', 'ENDING_LIKELY']);
+
+function stayedBelowMeaningful(point: ArchivePoint): boolean {
+  return point.leadsComplete && point.analysisMmHr != null && point.analysisMmHr < POINT.eventThresholdMmHr && point.leads.every((lead) => (lead.rainRateMmHr ?? 0) < POINT.eventThresholdMmHr);
+}
+
+/** One stored case per outcome, including the misses. Pending truth is not labeled correct. */
+export function representativeExamples(points: readonly ArchivePoint[]): Array<Record<string, unknown>> {
+  const complete = points.filter((point) => point.leadsComplete);
+  const choices: Array<{ kind: string; point: ArchivePoint | undefined }> = [
+    { kind: 'correct-dry', point: complete.find((point) => point.decision?.selectedState === 'DRY' && stayedBelowMeaningful(point)) },
+    {
+      kind: 'correct-continuation',
+      point: complete.find(
+        (point) =>
+          point.decision?.selectedState === 'RAINING' &&
+          (point.analysisMmHr ?? 0) >= POINT.eventThresholdMmHr &&
+          point.observedEndingMin == null &&
+          point.leads.some((lead) => (lead.rainRateMmHr ?? 0) >= POINT.eventThresholdMmHr),
+      ),
+    },
+    { kind: 'correct-onset', point: complete.find((point) => typeof point.observedOnsetMin === 'number' && RAIN_CALLS.has(point.decision?.selectedState ?? '')) },
+    { kind: 'missed-onset', point: complete.find((point) => typeof point.observedOnsetMin === 'number' && !RAIN_CALLS.has(point.decision?.selectedState ?? '')) },
+    { kind: 'correct-ending', point: complete.find((point) => point.observedEndingMin != null && ENDING_CALLS.has(point.decision?.selectedState ?? '')) },
+    { kind: 'missed-ending', point: complete.find((point) => point.observedEndingMin != null && !ENDING_CALLS.has(point.decision?.selectedState ?? '')) },
+    { kind: 'false-alarm', point: complete.find((point) => RAIN_CALLS.has(point.decision?.selectedState ?? '') && stayedBelowMeaningful(point)) },
+    { kind: 'timing-uncertain', point: complete.find((point) => point.decision?.selectedState === 'TIMING_UNCERTAIN') },
+    { kind: 'large-intensity-miss', point: complete.find((point) => (point.maxWetAbsError ?? 0) >= 10) },
+  ];
+  return choices.map(({ kind, point }) => (point ? { kind, ...exampleFor(point, kind) } : { kind, missing: true }));
 }
 
 export const REVIEW_EXAMPLES: ReadonlyArray<{ id: string; hour: string; label: string }> = [

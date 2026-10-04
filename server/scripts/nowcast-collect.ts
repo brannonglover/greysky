@@ -1,13 +1,17 @@
 /**
- * One research collection cycle. Not part of a user request.
- * `--loop` repeats on the interval. Ctrl-C stops it.
+ * Research collection. Not part of a user request and not a production cron.
+ * One cycle scouts and, when the rules say so, archives a region.
+ * `--loop` repeats every 10 minutes. Ctrl-C stops it.
+ * Each cycle fills verifying leads on cases whose future frames now exist.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { captureIssue } from '../lib/precipNowcast/archive';
+import { captureIssue, replayBundle } from '../lib/precipNowcast/archive';
 import { BENCHMARK_CASES, EXPANDED_CASES, type BenchmarkCase } from '../lib/precipNowcast/cases';
 import { casesRoot, listBundleDirs, readCase } from '../lib/precipNowcast/caseFile';
+import { POINT_PREDICTOR_VERSION } from '../lib/precipNowcast/point';
+import { fillOpenVerification } from '../lib/precipNowcast/verifyFill';
 import { COLLECT, classifyRegion, collectRegionSnap } from '../lib/precipNowcast/collect';
 import { observedTimes } from '../lib/mrms';
 import { sampleMrmsPoint } from '../lib/precipNowcast/mrmsPoint';
@@ -57,6 +61,18 @@ function saveState(state: State) {
   fs.writeFileSync(STATE_FILE(), JSON.stringify(state));
 }
 
+function replayOne() {
+  const dirs = listBundleDirs();
+  if (!dirs.length) return;
+  const bundle = readCase(dirs[0]);
+  const pointId = bundle.points[0]?.id;
+  if (!pointId || bundle.predictorVersion !== POINT_PREDICTOR_VERSION) {
+    throw new Error(`archive predictor ${bundle.predictorVersion}`);
+  }
+  const result = replayBundle(dirs[0], pointId, POINT_PREDICTOR_VERSION);
+  console.log(`replay ${result.predictorVersion} ${pointId} @ ${bundle.observationTime}`);
+}
+
 async function cycle() {
   const state = loadState();
   if (!Object.keys(state.regions).length) seedFromArchive(state);
@@ -64,6 +80,8 @@ async function cycle() {
   const latest = times[times.length - 1];
   if (!latest) throw new Error('No MRMS time');
   const nowMs = Date.parse(latest);
+  const filled = await fillOpenVerification(times, nowMs);
+  if (filled.leads) console.log(`filled ${filled.leads} verifying lead(s) on ${filled.bundles} case(s)`);
   const scouts = [];
   for (const point of POINTS) {
     const sample = await sampleMrmsPoint(latest, point.latitude, point.longitude);
@@ -109,7 +127,14 @@ async function cycle() {
 
 async function main() {
   const loop = process.argv.includes('--loop');
-  const intervalMin = Number(process.argv.find((arg) => arg.startsWith('--every='))?.slice('--every='.length) ?? 15);
+  const intervalMin = Number(process.argv.find((arg) => arg.startsWith('--every='))?.slice('--every='.length) ?? COLLECT.scoutIntervalMin);
+  if (loop) {
+    try {
+      replayOne();
+    } catch (error) {
+      console.error(error);
+    }
+  }
   do {
     await cycle();
     if (!loop) break;

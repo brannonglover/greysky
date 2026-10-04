@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { casesRoot, listBundleDirs, readCase } from '../lib/precipNowcast/caseFile';
-import { exampleFor, pointsFromBundle, REVIEW_EXAMPLES, verifyArchive } from '../lib/precipNowcast/verify';
+import { exampleFor, pointsFromBundle, representativeExamples, REVIEW_EXAMPLES, verifyArchive } from '../lib/precipNowcast/verify';
 
 function num(value: unknown, digits = 2): string {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '—';
@@ -49,6 +49,11 @@ function main() {
   for (const cutoff of report.cutoffs) console.log(`  ${cutoff.cutoff} precision=${num(cutoff.precision)} recall=${num(cutoff.recall)} falseShare=${num(cutoff.falseAlarmShare)} n=${cutoff.forecasts} events=${cutoff.events} enough=${cutoff.enough}`);
   console.log('\ngates');
   for (const gate of report.gates) console.log(`  ${gate.pass ? 'PASS' : 'FAIL'} ${gate.id}: need ${gate.need}; have ${gate.have}`);
+  console.log('\nrepresentative');
+  for (const example of representativeExamples(points)) {
+    if ('missing' in example && example.missing) console.log(`  ${example.kind}: none yet`);
+    else console.log(`  ${example.kind}: ${example.id} ${example.phrase} ${example.verdict}`);
+  }
   console.log('\nexamples');
   for (const example of report.examples) {
     if ('missing' in example) {

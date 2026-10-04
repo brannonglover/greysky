@@ -304,3 +304,23 @@ Candidate cutoffs from 0.3 to 0.8 each have precision 1.0 and recall 1.0 on 7 fo
 
 The production gates were written before this score. They are not adjusted to it. All of them fail. The nowcast needs 30 wet region-hours and has 3. It needs 20 onset events and has 1. It needs 20 ending events and has 1. It needs 3 readable light-rain reliability bins besides the dry bin and has 0. Wet p10–p90 coverage needs to be at least 0.70 and is 0.16. A “likely” statement needs a false-alarm rate of at most 0.35 on at least 20 forecasts from 10 events; the rate on the 7 forecasts is 0.00 and the sample is too small. Onset timing MAE needs to be at most 15 minutes on at least 20 events; the one event is 6 minutes and does not meet the count. Still required: stratiform rain, an organized line, an isolated cell outside this Atlanta complex, stationary or slow rain, and enough clean onsets and endings that those gates can be evaluated. Calibration is not claimed.
 
+## Collection
+
+Checkpoint above is `9b49c90`. The predictor remains `regional-ensemble-1`. `shadow-1` and the production gates stay at the values scored in that checkpoint. Wet p10–p90 coverage of 0.16 is recorded there and is not being corrected. Another predictor phase waits until the gate counts are largely filled, or until several independent regimes show a repeated failure.
+
+Collection is a local research loop. It is not a Vercel cron and it does not run on a user request. From `server/`:
+
+```
+npm run nowcast:watch
+```
+
+That scouts every 10 minutes until it is stopped. `npm run nowcast:collect` is one cycle. `npm run nowcast:status` prints archive composition and gate progress without downloading anything. `npm run nowcast:fill` writes verifying rates into cases whose future frames now exist. `npm run nowcast:replay-check` replays one stored case with `regional-ensemble-1`.
+
+MRMS frames are about 2 minutes, and the public time list keeps about 2 hours. The loop looks every 10 minutes so a dry-to-wet or wet-to-dry change is seen before that list moves on. Each look is one sample per scouted city. A full region, with its frames, is written only when the existing selection rules fire, and an observation that is already stored is not written again. Onset and ending skip the 20 minute gap. A steady wet region, and a fully dry region, do not. A dry region is kept at most once per 6 hours. A point leaving a dry pixel is the signal that rain has arrived there. A wet scout beside a dry scout in the same region is a boundary, so the dry point is kept with the wet one.
+
+Each cycle fills leads that were null because the verifying frame did not exist at issue time. A frame that is still in the future, or has rolled off, stays null. Null is not stored as 0 mm/hr. Status counts a case as pending when none of its +10 to +60 leads are filled, partial when some are, and verified when every point has a rate at each of those leads. A verified zero is a dry observation.
+
+The Atlanta hours remain one storm. Status reports wet region-hours and wet region-days separately. The gates still ask for 30 wet region-hours, 20 onsets, 20 endings, 3 readable light-rain bins besides the dry bin, wet p10–p90 coverage of at least 0.70, a likely false-alarm rate of at most 0.35 on at least 20 forecasts from 10 events, and onset timing MAE of at most 15 minutes on at least 20 events. Those numbers are not lowered because collection is slow.
+
+`npm run nowcast:verify` keeps the named hours and also keeps one example each, when the archive has one, of a correct dry forecast, a correct continuation, a correct onset, a missed onset, a correct ending, a missed ending, a false alarm, a timing-uncertain forecast, and a large intensity miss. A case whose future leads are still empty is not called correct. Production wording, notifications, the hero, the hourly forecast, and the radar map are unchanged. The shadow endpoint is still unused by the app.
+

@@ -2,11 +2,12 @@
  * Collector rules, shadow states, and production gates.
  * The gates are the precommitted numbers. A zero sample fails them.
  */
-import { classifyRegion } from '../lib/precipNowcast/collect';
-import { decide, type ShadowDecision } from '../lib/precipNowcast/decision';
-import { gradeProduction } from '../lib/precipNowcast/gates';
+import { COLLECT, classifyRegion } from '../lib/precipNowcast/collect';
+import { DECISION, decide, type ShadowDecision } from '../lib/precipNowcast/decision';
+import { PRODUCTION_GATES, gradeProduction } from '../lib/precipNowcast/gates';
 import type { PointNowcast } from '../lib/precipNowcast/point';
-import { eventId } from '../lib/precipNowcast/verify';
+import type { CaseBundle } from '../lib/precipNowcast/caseFile';
+import { eventId, representativeExamples, verificationState, type ArchivePoint } from '../lib/precipNowcast/verify';
 
 function check(name: string, ok: boolean) {
   if (!ok) {
@@ -115,6 +116,77 @@ const grades = gradeProduction({
   onsetTimedEvents: 0,
 });
 check('an empty archive fails every production gate', grades.every((gate) => !gate.pass));
+check(
+  'production gates stay at the levels written before the first score',
+  PRODUCTION_GATES.independentWetEvents === 30 &&
+    PRODUCTION_GATES.independentOnsetEvents === 20 &&
+    PRODUCTION_GATES.independentEndingEvents === 20 &&
+    PRODUCTION_GATES.readableLightBins === 3 &&
+    PRODUCTION_GATES.wetP10P90Coverage === 0.7 &&
+    PRODUCTION_GATES.likelyFalseAlarmRate === 0.35 &&
+    PRODUCTION_GATES.likelyForecasts === 20 &&
+    PRODUCTION_GATES.likelyEvents === 10 &&
+    PRODUCTION_GATES.onsetTimingMaeMin === 15 &&
+    PRODUCTION_GATES.onsetTimingEvents === 20,
+);
+check(
+  'shadow-1 cutoffs stay put',
+  DECISION.ruleVersion === 'shadow-1' && DECISION.possibleAt === 0.4 && DECISION.likelyAt === 0.7 && DECISION.narrowMinutes === 15 && DECISION.broadMinutes === 30,
+);
+check('the scout interval stays 10 minutes and the dry gap stays 6 hours', COLLECT.scoutIntervalMin === 10 && COLLECT.dryControlGapMin === 360 && COLLECT.minArchiveGapMin === 20);
+
+function leads(rates: Array<number | null>) {
+  return {
+    schemaVersion: 1,
+    points: [
+      {
+        verification: {
+          source: 'mrms-cref-qcd',
+          leads: [10, 20, 30, 45, 60].map((leadMinutes, index) => ({
+            leadMinutes,
+            validAt: null,
+            rainRateMmHr: rates[index] ?? null,
+            dbz: null,
+          })),
+        },
+      },
+    ],
+  } as unknown as CaseBundle;
+}
+check('unfilled future leads are pending, and a stored zero is a dry observation', verificationState(leads([null, null, null, null, null])) === 'pending' && verificationState(leads([0, 0, 0, 0, 0])) === 'verified');
+check('a mix of numbers and missing leads is partial', verificationState(leads([1, null, null, null, null])) === 'partial');
+
+function archived(patch: Partial<ArchivePoint>): ArchivePoint {
+  return {
+    id: 'x',
+    observationTime: '2026-10-04T12:00:00.000Z',
+    eventId: '34.00,-84.50|2026-10-04T12',
+    dayId: '34.00,-84.50|2026-10-04',
+    regionKey: 'k',
+    regime: null,
+    analysisMmHr: 0,
+    decision: { selectedState: 'DRY', experimentalPhrase: 'Staying dry for the next hour' } as ShadowDecision,
+    observedOnsetMin: null,
+    observedEndingMin: null,
+    leads: [10, 20, 30, 45, 60].map((leadMinutes) => ({ leadMinutes, rainRateMmHr: 0 })),
+    maxWetAbsError: null,
+    leadsComplete: true,
+    ...patch,
+  };
+}
+const examples = representativeExamples([
+  archived({}),
+  archived({
+    id: 'ended',
+    analysisMmHr: 2,
+    observedEndingMin: 20,
+    decision: { selectedState: 'RAINING', experimentalPhrase: 'Rain continuing for the next hour' } as ShadowDecision,
+    leads: [10, 20, 30, 45, 60].map((leadMinutes) => ({ leadMinutes, rainRateMmHr: leadMinutes === 10 ? 2 : 0 })),
+  }),
+  archived({ id: 'open', leadsComplete: false, leads: [10, 20, 30, 45, 60].map((leadMinutes) => ({ leadMinutes, rainRateMmHr: null })) }),
+]);
+check('a missed ending is retained', examples.find((row) => row.kind === 'missed-ending' && row.id === 'ended') != null);
+check('a case with no future truth is not called correct dry', examples.find((row) => row.kind === 'correct-dry')?.id === 'x');
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('verify tests passed');

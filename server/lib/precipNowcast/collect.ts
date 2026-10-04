@@ -10,6 +10,9 @@
  *   every scout.
  * - A fully dry region is kept at most once per 6 hours, as a control.
  * - A failed scout is not dry. A region with a failed point is not a dry control.
+ * - Rain arriving at a scouted point is the dry-to-trace onset rule. A wet
+ *   point beside a dry point in the same region is a boundary, so the dry
+ *   point is archived with it.
  * - Points that share a snapped region are archived together.
  */
 import { regionKey } from './point';
@@ -20,6 +23,13 @@ export const COLLECT = {
   dryControlGapMin: 360,
   wetMmHr: 0.6,
   changeMmHr: 1,
+  /**
+   * Scout interval. MRMS frames are about 2 minutes and the public time list
+   * keeps about 2 hours. A 10 minute look sees a dry-to-wet or wet-to-dry
+   * change, and an onset or ending is archived immediately. A steady region
+   * still waits out the 20 minute gap, so the loop does not save every frame.
+   */
+  scoutIntervalMin: 10,
 } as const;
 
 export type CollectReason =

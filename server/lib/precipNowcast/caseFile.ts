@@ -115,6 +115,12 @@ export function readFrame(file: string, meta: StoredFrame): ObservationField {
   };
 }
 
+export function writeCase(dir: string, bundle: CaseBundle): void {
+  if (bundle.schemaVersion !== CASE_SCHEMA_VERSION) throw new Error(`Unsupported case schema ${bundle.schemaVersion}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'case.json'), JSON.stringify(bundle));
+}
+
 export function writeBundle(dir: string, bundle: CaseBundle, fields: ObservationField[]): void {
   fs.mkdirSync(path.join(dir, 'frames'), { recursive: true });
   fields.forEach((field, index) => {
