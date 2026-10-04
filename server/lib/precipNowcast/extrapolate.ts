@@ -71,3 +71,30 @@ export function tracePixel(
 ): Trace {
   return walk(field, motion, x, y, leadSec, chunkSec);
 }
+
+/** Backward trace plus the source pixel the rain rate was read from. */
+export function tracePixelSource(
+  field: ObservationField,
+  motion: MotionField,
+  x: number,
+  y: number,
+  leadSec: number,
+  chunkSec: number,
+): Trace & { x: number; y: number } {
+  let px = x;
+  let py = y;
+  let left = leadSec;
+  const step = Math.max(1, chunkSec);
+  while (left > 1e-6) {
+    const h = Math.min(step, left);
+    const velocity = vectorAtPixel(motion, px, py);
+    if (!velocity) {
+      const here = withoutVelocity(field, px, py) ?? { rainRateMmHr: null, echoWeight: 0, emptyWeight: 0, missingWeight: 1 };
+      return { ...here, x: px, y: py };
+    }
+    px -= (velocity.eastMs * h) / field.geometry.metersPerPixelX;
+    py -= (-velocity.northMs * h) / field.geometry.metersPerPixelY;
+    left -= h;
+  }
+  return { ...sampleField(field, px, py), x: px, y: py };
+}

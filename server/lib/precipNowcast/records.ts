@@ -2,7 +2,7 @@ import { SCORE_LEADS_MIN, type ScoreLeadMin } from './thresholds';
 
 export const SCHEMA_VERSION = 1 as const;
 
-export type PredictorId = 'persistence' | 'mrms-advection' | 'hrrr' | 'open-meteo' | 'regional-motion';
+export type PredictorId = 'persistence' | 'mrms-advection' | 'hrrr' | 'open-meteo' | 'regional-motion' | 'regional-ensemble';
 
 export type IntendedRegime = 'dry' | 'widespread' | 'isolated' | 'convective';
 

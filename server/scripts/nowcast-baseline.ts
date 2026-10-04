@@ -14,7 +14,9 @@ import { join } from 'node:path';
 
 import { runBaseline, writeBaselineFiles, type BaselineRun } from '../lib/precipNowcast/baseline';
 import { BENCHMARK_CASES, EXPANDED_CASES } from '../lib/precipNowcast/cases';
-import { formatScorecards } from '../lib/precipNowcast/score';
+import { MEANINGFUL_MM_HR } from '../lib/precipNowcast/ensemble';
+import type { PredictionRecord } from '../lib/precipNowcast/records';
+import { formatScorecards, scoreRecords } from '../lib/precipNowcast/score';
 
 const ATLANTA_ISSUE = '2026-10-04T12:12:41.000Z';
 
@@ -47,6 +49,50 @@ function printRun(label: string, run: BaselineRun): void {
           `gap ${d.maxGapSec ?? '?'} s`,
       );
     }
+  }
+  const ensemble = run.predictions.filter((row) => row.predictorId === 'regional-ensemble');
+  if (ensemble.length) {
+    console.log('regional-ensemble timing');
+    for (const row of ensemble) {
+      const d = row.diagnostics;
+      console.log(
+        `  ${row.caseId.padEnd(16)} evolution ${d.evolutionMs ?? '?'} ms  members ${d.ensembleMs ?? '?'} ms  ` +
+          `uncertainty ${d.uncertainty ?? '?'}  tendency ${d.pointTendencyMmHrPerMin ?? '?'} mm/hr/min  ` +
+          `expansion ${d.expansionPerMin ?? '?'} /min  spread ${d.spread ?? '?'}  p10 ${d.p10 ?? '?'}  p90 ${d.p90 ?? '?'}`,
+      );
+    }
+    printMeaningful(run, ensemble);
+  }
+}
+
+function probabilitiesFrom(diagnostic: string | number | boolean | null | undefined): number[] {
+  return String(diagnostic ?? '')
+    .split(',')
+    .map((part) => (part === '' ? Number.NaN : Number(part)));
+}
+
+function printMeaningful(run: BaselineRun, ensemble: readonly PredictionRecord[]): void {
+  for (const [index, threshold] of MEANINGFUL_MM_HR.entries()) {
+    const key = index === 0 ? 'lightProb' : 'moderateProb';
+    const rewritten = run.predictions.map((prediction) => {
+      if (prediction.predictorId !== 'regional-ensemble') {
+        return {
+          ...prediction,
+          leads: prediction.leads.map((lead) => ({ ...lead, precipProbability: null })),
+        };
+      }
+      const probs = probabilitiesFrom(ensemble.find((row) => row.caseId === prediction.caseId)?.diagnostics[key]);
+      return {
+        ...prediction,
+        leads: prediction.leads.map((lead, leadIndex) => ({
+          ...lead,
+          precipProbability: Number.isFinite(probs[leadIndex]) ? probs[leadIndex] : null,
+        })),
+      };
+    });
+    console.log(`\nmeaningful rain, threshold ${threshold} mm/hr`);
+    console.log('Hits use the expected rate. Brier is blank except for the ensemble, which stores that threshold.');
+    console.log(formatScorecards(scoreRecords(rewritten, run.observations, threshold)));
   }
 }
 

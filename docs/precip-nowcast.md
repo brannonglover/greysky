@@ -201,3 +201,11 @@ Motion is block pyramidal Lucas-Kanade on rain rate, 16-pixel blocks, mean-norma
 Internal lead step is 2 minutes. On a synthetic moving cell the rule was: rain-rate MAE within 0.5 mm/hr of a 1-minute trace, and core arrival shifted by at most 2 minutes. Five minutes missed that rule (MAE 1.45 mm/hr, onset shift 1 minute). Two minutes passed (MAE 0.41 mm/hr, onset shift 0). A full 96×96 trace at 30 minutes took 22 ms at a 1-minute step, 7 ms at 2 minutes, and 4 ms at 5 minutes, so the choice is the rate error, not the CPU time.
 
 `npm run nowcast:baseline -- --expand` scores six extra cities into `server/.nowcast-out/expanded` and does not mix them into the six-case table. `--issue` replays one time. `--append` adds to the local JSONL. Labels are not rewritten after a run.
+
+## Phase 3 records
+
+`predictorId: "regional-ensemble"` version `regional-ensemble-1` sits beside `regional-motion`. Schema version stays 1. The stored probability is the fraction of members above 0.02 mm/hr. The stored rate is the member mean. Light (0.6) and moderate (2.5) probabilities, spread, and the 10th and 90th percentiles are diagnostic strings in lead order. They are candidates from the existing rain bands, not a new scoreboard line.
+
+Evolution is the residual after the Phase 2 velocity field aligns the older frame onto the newer one. A uniform translation leaves that residual near zero. Missing samples are skipped. A block tendency is clamped to 3 mm/hr per minute, then forgotten with a 12-minute half-life, and the forecast rate cannot exceed 75 mm/hr. Those limits were set before the Atlanta replay. Twenty-four members perturb that one analysis. They do not rerun optical flow. Speed, a cross-track component, the tendency, and the half-life are scaled together. The spread widens when few vectors are solved, pairs are rejected, or the tendency flips between frames. The Phase 2 block-quality number is not used as a probability.
+
+On the 12:12 UTC Atlanta replay the aligned history supported about 0.08 mm/hr of growth per minute. The ensemble mean stayed near 1 mm/hr and its 90th percentile at +45 was 1.2 mm/hr. The observed 49 mm/hr was outside that distribution. The growth was not in the prior frames.

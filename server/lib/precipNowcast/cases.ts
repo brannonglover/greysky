@@ -104,4 +104,18 @@ export const EXPANDED_CASES: readonly BenchmarkCase[] = [
     intendedRegime: 'widespread',
     note: 'Upper Midwest. Long-lived shields and decaying areas.',
   },
+  {
+    id: 'marietta',
+    latitude: 33.9526,
+    longitude: -84.5499,
+    intendedRegime: 'convective',
+    note: 'Northwest metro Atlanta. Added to see whether a cell covers more than one point.',
+  },
+  {
+    id: 'atlanta-downtown',
+    latitude: 33.749,
+    longitude: -84.388,
+    intendedRegime: 'convective',
+    note: 'Downtown Atlanta. Added to see whether the 30345 cell was local.',
+  },
 ];

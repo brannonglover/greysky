@@ -6,8 +6,8 @@
  * zero (stationary echo with texture) stays a solved vector.
  *
  * Each block is mean-normalised before the solve so a uniform brightening
- * does not masquerade as motion. That is the whole of the evolution handling
- * in this phase.
+ * does not masquerade as motion. Evolution is estimated afterwards, from the
+ * residual of this alignment.
  */
 
 import { flowRates, type ObservationField } from './field';

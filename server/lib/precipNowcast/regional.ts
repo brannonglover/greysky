@@ -3,8 +3,8 @@
  * No ensemble and no growth or decay.
  */
 import { pixelOf, sampleField } from './field';
-import { loadRegionalHistory, type HistoryStats } from './history';
-import { estimateMotion } from './motion';
+import { loadRegionalHistory, type HistoryStats, type RegionalHistory } from './history';
+import { estimateMotion, type MotionField } from './motion';
 import { tracePoint } from './extrapolate';
 import { leadStepMin } from './resolution';
 import { SCORE_LEADS_MIN, type ScoreLeadMin } from './thresholds';
@@ -40,13 +40,11 @@ function historyDiagnostics(stats: HistoryStats, extra: Record<string, string | 
   };
 }
 
-export async function regionalForecast(args: {
-  latitude: number;
-  longitude: number;
-  issuedAtMs: number;
-  times: readonly string[];
-}): Promise<RegionalForecast> {
-  const history = await loadRegionalHistory(args.latitude, args.longitude, args.issuedAtMs, args.times);
+export function regionalFromHistory(
+  history: RegionalHistory,
+  args: { latitude: number; longitude: number; issuedAtMs: number },
+  solvedMotion?: { motion: MotionField; motionMs: number },
+): RegionalForecast {
   const latest = history.frames[history.frames.length - 1];
   const stepMin = leadStepMin();
   const emptyLeads = SCORE_LEADS_MIN.map((leadMinutes) => ({
@@ -70,8 +68,8 @@ export async function regionalForecast(args: {
   }
 
   const motionStarted = Date.now();
-  const motion = estimateMotion(history.frames);
-  const motionMs = Date.now() - motionStarted;
+  const motion = solvedMotion?.motion ?? estimateMotion(history.frames);
+  const motionMs = solvedMotion?.motionMs ?? Date.now() - motionStarted;
   const solved = motion.vectors.filter((vector) => vector.source === 'solved').length;
   const unknown = motion.vectors.filter((vector) => vector.source === 'unknown').length;
 
@@ -106,4 +104,14 @@ export async function regionalForecast(args: {
       error: null,
     }),
   };
+}
+
+export async function regionalForecast(args: {
+  latitude: number;
+  longitude: number;
+  issuedAtMs: number;
+  times: readonly string[];
+}): Promise<RegionalForecast> {
+  const history = await loadRegionalHistory(args.latitude, args.longitude, args.issuedAtMs, args.times);
+  return regionalFromHistory(history, args);
 }

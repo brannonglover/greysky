@@ -11,7 +11,9 @@ import { hrrrLeadRates } from './hrrrPoint';
 import { nearestIso, sampleMrmsPoint, type PointRate } from './mrmsPoint';
 import { openMeteoLeads } from './openMeteo';
 import { predictionFromRates, type LeadInput } from './predict';
-import { regionalForecast } from './regional';
+import { ensembleFromHistory } from './ensemble';
+import { loadRegionalHistory } from './history';
+import { regionalFromHistory } from './regional';
 import {
   SCHEMA_VERSION,
   serializeRecord,
@@ -192,21 +194,30 @@ export async function runBaseline(options?: {
       }),
     );
 
-    const regional = await regionalForecast({
-      latitude: benchmark.latitude,
-      longitude: benchmark.longitude,
-      issuedAtMs: issueMs,
-      times,
-    }).catch((error: unknown) => ({
-      analysisRateMmHr: null as number | null,
-      analysisValidAt: issuedAt,
-      leads: leadTargets.map((lead) => ({
-        leadMinutes: lead.leadMinutes,
-        validAt: lead.validAt,
-        rainRateMmHr: null as number | null,
-      })),
-      diagnostics: { error: error instanceof Error ? error.message : 'Regional motion failed' },
-    }));
+    const history = await loadRegionalHistory(benchmark.latitude, benchmark.longitude, issueMs, times).catch(() => null);
+    const ensemble = history
+      ? ensembleFromHistory(history, {
+          latitude: benchmark.latitude,
+          longitude: benchmark.longitude,
+          issuedAtMs: issueMs,
+        })
+      : null;
+    const regional = history
+      ? regionalFromHistory(
+          history,
+          { latitude: benchmark.latitude, longitude: benchmark.longitude, issuedAtMs: issueMs },
+          ensemble?.motion ? { motion: ensemble.motion, motionMs: ensemble.motionMs } : undefined,
+        )
+      : {
+          analysisRateMmHr: null as number | null,
+          analysisValidAt: issuedAt,
+          leads: leadTargets.map((lead) => ({
+            leadMinutes: lead.leadMinutes,
+            validAt: lead.validAt,
+            rainRateMmHr: null as number | null,
+          })),
+          diagnostics: { error: 'Regional history failed' },
+        };
     predictions.push(
       predictionFromRates({
         predictorId: 'regional-motion',
@@ -223,6 +234,32 @@ export async function runBaseline(options?: {
           rateMmHr: lead.rainRateMmHr,
         })),
         diagnostics: regional.diagnostics,
+      }),
+    );
+
+    const ensembleLeads = ensemble?.leads ?? leadTargets.map((lead) => ({
+      leadMinutes: lead.leadMinutes,
+      validAt: lead.validAt,
+      expectedRainRateMmHr: null as number | null,
+      precipProbability: null as number | null,
+    }));
+    predictions.push(
+      predictionFromRates({
+        predictorId: 'regional-ensemble',
+        issuedAt,
+        latitude: benchmark.latitude,
+        longitude: benchmark.longitude,
+        caseId: benchmark.id,
+        intendedRegime: benchmark.intendedRegime,
+        analysisValidAt: ensemble?.analysisValidAt ?? issuedAt,
+        analysisRateMmHr: ensemble?.analysisRateMmHr ?? null,
+        leads: ensembleLeads.map((lead) => ({
+          leadMinutes: lead.leadMinutes,
+          validAt: lead.validAt,
+          rateMmHr: lead.expectedRainRateMmHr,
+          precipProbability: lead.precipProbability,
+        })),
+        diagnostics: ensemble?.diagnostics ?? { error: 'Regional history failed' },
       }),
     );
 
