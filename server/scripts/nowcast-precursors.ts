@@ -52,7 +52,7 @@ async function main() {
       };
       regionRows.push(row);
       console.log(
-        `${point.id} @ ${bundle.observationTime.slice(11, 16)} spd=${num(features.speedMs, 1)} nearSpd=${num(features.nearbyMedianSpeedMs, 1)} solved=${num(features.nearbySolvedFraction)} trace20=${num(features.traceCoverage20)} dTrace=${num(features.traceCoverageTendencyPerMin, 3)} light20=${num(features.lightCoverage20)} corrT=${num(features.corridorTraceCoverage)} corrI=${num(features.corridorInitiationFraction)} circI=${num(features.circleInitiationFraction)} new=${features.latestNewCells20} pers=${num(features.persistentInitiationFraction)} near=${num(features.nearestPersistentKm, 1)} grow=${num(features.existingGrowthFraction)} weak=${num(features.weakEchoPersistence)} tend=${num(features.pointResidualMmHrPerMin, 2)} ms=${features.ms}`,
+        `${point.id} @ ${bundle.observationTime.slice(11, 16)} src=${features.trajectorySource} spd=${num(features.speedMs, 1)} corrT=${num(features.corridorTraceCoverage)} corrI=${num(features.corridorInitiationFraction)} circI=${num(features.circleInitiationFraction)} near=${num(features.nearestPersistentKm, 1)} grow=${num(features.existingGrowthFraction)} tend=${num(features.pointResidualMmHrPerMin, 2)}`,
       );
       console.log(`  outcomes ${outcomes.map((item) => `+${item.leadMinutes}:${item.label}/${num(item.rainRateMmHr)}`).join(' ')}`);
     }

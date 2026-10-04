@@ -2,6 +2,12 @@
  * Local radar precursors. Computed from the regional fields already used for
  * motion. This does not change ensemble spread or the 2 km point neighborhood.
  *
+ * Phase 5B found that the coverage, initiation-count, persistence, elongation,
+ * and local-convergence features do not separate a point that then intensifies
+ * from a nearby point that stays dry. They stay here for replay. They are not
+ * inputs to the predictor. The motion-compensated point residual is the Phase 3
+ * evolution signal.
+ *
  * Initiation is rain where the motion-aligned previous field was dry.
  * Existing-cell growth is rain that was already wet and got heavier.
  * A cell must initiate on two pairs, and a component must cover three cells,
@@ -19,6 +25,12 @@ export const PRECURSOR = {
   minComponentCells: 3,
   /** Research label only: existing rain that later jumps by this much. */
   intensifyMmHr: 5,
+  /** A single vector slower than this does not define a corridor. */
+  minCorridorSpeedMs: 1,
+  consensusRadiusKm: 20,
+  minConsensusVectors: 3,
+  consensusAgreeDeg: 45,
+  consensusAgreeFraction: 0.5,
   lightMmHr: 0.6,
   moderateMmHr: 2.5,
   heavyMmHr: 7.5,
@@ -95,21 +107,102 @@ function advectedRate(older: ObservationField, motion: MotionField, x: number, y
   return null;
 }
 
+export type CorridorSource = 'target-solved' | 'nearby-consensus' | 'unsupported';
+
 export type TrajectoryMask = {
   supported: boolean;
+  source: CorridorSource;
   speedMs: number;
   corridor: Uint8Array;
   adjacent: Uint8Array;
 };
 
-/** Upstream of the target, along the motion vector, with a cross-track band. */
+function vectorCenter(column: number, row: number): { x: number; y: number } {
+  return {
+    x: MOTION.blockPx / 2 + column * MOTION.stepPx,
+    y: MOTION.blockPx / 2 + row * MOTION.stepPx,
+  };
+}
+
+function weightedMedian(values: number[], weights: number[]): number {
+  const order = values
+    .map((value, index) => ({ value, weight: weights[index] ?? 0 }))
+    .sort((a, b) => a.value - b.value);
+  const total = order.reduce((sum, item) => sum + item.weight, 0);
+  let covered = 0;
+  for (const item of order) {
+    covered += item.weight;
+    if (covered >= total / 2) return item.value;
+  }
+  return order.length ? order[order.length - 1].value : 0;
+}
+
+/**
+ * Corridor direction. A solved target vector at or above 1 m/s is used as-is.
+ * A weak or filled target does not get a lower threshold. The direction then
+ * comes from the weighted median of solved vectors within 20 km, and only when
+ * those vectors agree.
+ */
+export function corridorVelocity(
+  field: ObservationField,
+  motion: MotionField,
+  x: number,
+  y: number,
+): { source: CorridorSource; eastMs: number; northMs: number; speedMs: number } {
+  const target = vectorAtPixel(motion, x, y);
+  const targetSpeed = target && Number.isFinite(target.eastMs) ? Math.hypot(target.eastMs, target.northMs) : 0;
+  if (target && target.source === 'solved' && targetSpeed >= PRECURSOR.minCorridorSpeedMs) {
+    return { source: 'target-solved', eastMs: target.eastMs, northMs: target.northMs, speedMs: targetSpeed };
+  }
+  const easts: number[] = [];
+  const norths: number[] = [];
+  const weights: number[] = [];
+  const limit = PRECURSOR.consensusRadiusKm * 1000;
+  for (let row = 0; row < motion.rows; row += 1) {
+    for (let column = 0; column < motion.columns; column += 1) {
+      const vector = motion.vectors[row * motion.columns + column];
+      if (!vector || vector.source !== 'solved' || !Number.isFinite(vector.eastMs)) continue;
+      const center = vectorCenter(column, row);
+      const east = (center.x - x) * field.geometry.metersPerPixelX;
+      const north = -(center.y - y) * field.geometry.metersPerPixelY;
+      if (Math.hypot(east, north) > limit) continue;
+      easts.push(vector.eastMs);
+      norths.push(vector.northMs);
+      weights.push(Math.max(vector.quality, 0.05));
+    }
+  }
+  const none = { source: 'unsupported' as const, eastMs: 0, northMs: 0, speedMs: targetSpeed };
+  if (easts.length < PRECURSOR.minConsensusVectors) return none;
+  const eastMs = weightedMedian(easts, weights);
+  const northMs = weightedMedian(norths, weights);
+  const speedMs = Math.hypot(eastMs, northMs);
+  if (speedMs < PRECURSOR.minCorridorSpeedMs) return { ...none, speedMs };
+  const ux = eastMs / speedMs;
+  const uy = northMs / speedMs;
+  const cos = Math.cos((PRECURSOR.consensusAgreeDeg * Math.PI) / 180);
+  let agree = 0;
+  let total = 0;
+  for (let i = 0; i < easts.length; i += 1) {
+    total += weights[i];
+    const speed = Math.hypot(easts[i], norths[i]);
+    if (speed < 1e-3) continue;
+    const dot = (easts[i] / speed) * ux + (norths[i] / speed) * uy;
+    if (dot >= cos) agree += weights[i];
+  }
+  if (!(total > 0) || agree / total < PRECURSOR.consensusAgreeFraction) return { ...none, speedMs };
+  return { source: 'nearby-consensus', eastMs, northMs, speedMs };
+}
+
+/** Upstream of the target, along the corridor vector, with a cross-track band. */
 export function trajectoryMask(field: ObservationField, motion: MotionField, x: number, y: number): TrajectoryMask {
   const { width, height, metersPerPixelX, metersPerPixelY } = field.geometry;
   const corridor = new Uint8Array(width * height);
   const adjacent = new Uint8Array(width * height);
-  const velocity = vectorAtPixel(motion, x, y);
-  const speed = velocity ? Math.hypot(velocity.eastMs, velocity.northMs) : 0;
-  if (!velocity || speed < 1) return { supported: false, speedMs: speed, corridor, adjacent };
+  const velocity = corridorVelocity(field, motion, x, y);
+  if (velocity.source === 'unsupported') {
+    return { supported: false, source: 'unsupported', speedMs: velocity.speedMs, corridor, adjacent };
+  }
+  const speed = velocity.speedMs;
   const ux = velocity.eastMs / speed;
   const uy = velocity.northMs / speed;
   const reach = speed * PRECURSOR.horizonMin * 60;
@@ -126,7 +219,7 @@ export function trajectoryMask(field: ObservationField, motion: MotionField, x: 
       else if (along >= -metersPerPixelX && along <= reach && cross <= half * 2) adjacent[index] = 1;
     }
   }
-  return { supported: true, speedMs: speed, corridor, adjacent };
+  return { supported: true, source: velocity.source, speedMs: speed, corridor, adjacent };
 }
 
 function circleMask(field: ObservationField, x: number, y: number, radiusKm: number): Uint8Array {
@@ -275,6 +368,7 @@ function motionConvergence(field: ObservationField, motion: MotionField, x: numb
 export type PrecursorFeatures = {
   ms: number;
   trajectorySupported: boolean;
+  trajectorySource: CorridorSource;
   speedMs: number;
   analysisRateMmHr: number | null;
   pointResidualMmHrPerMin: number | null;
@@ -324,6 +418,7 @@ export function precursorFeatures(
   const blank: PrecursorFeatures = {
     ms: 0,
     trajectorySupported: false,
+    trajectorySource: 'unsupported',
     speedMs: 0,
     analysisRateMmHr: null,
     pointResidualMmHrPerMin: null,
@@ -416,6 +511,7 @@ export function precursorFeatures(
   return {
     ms: Date.now() - started,
     trajectorySupported: trajectory.supported,
+    trajectorySource: trajectory.source,
     speedMs: trajectory.speedMs,
     analysisRateMmHr: rateAt(latest, x, y),
     pointResidualMmHrPerMin: Number.isFinite(targetResidual) && dtMin > 0 ? targetResidual / dtMin : null,

@@ -51,8 +51,44 @@ const mask = trajectoryMask(older, uniformMotion(48, 48, 10, 0), 24, 24);
 const west = 24 * older.geometry.width + (24 - 5);
 const east = 24 * older.geometry.width + (24 + 5);
 const north = (24 - 6) * older.geometry.width + 24;
-check('upstream cell is in the corridor', mask.supported && mask.corridor[west] === 1 && mask.corridor[east] === 0);
+check('upstream cell is in the corridor', mask.supported && mask.source === 'target-solved' && mask.corridor[west] === 1 && mask.corridor[east] === 0);
 check('cross-track cell outside the band is not in the corridor', mask.corridor[north] === 0);
+
+function setVector(motion: ReturnType<typeof uniformMotion>, column: number, row: number, eastMs: number, northMs: number, source: 'solved' | 'prevailing') {
+  const vector = motion.vectors[row * motion.columns + column];
+  vector.eastMs = eastMs;
+  vector.northMs = northMs;
+  vector.source = source;
+  vector.quality = 1;
+}
+
+const slow = uniformMotion(48, 48, 0.4, 0);
+setVector(slow, 1, 2, 10, 0, 'solved');
+setVector(slow, 3, 2, 10, 0, 'solved');
+setVector(slow, 2, 1, 10, 0, 'solved');
+setVector(slow, 2, 3, 10, 0, 'solved');
+const recovered = trajectoryMask(older, slow, 24, 24);
+check(
+  'a slow target uses the nearby solved consensus',
+  recovered.source === 'nearby-consensus' && recovered.corridor[west] === 1 && recovered.corridor[east] === 0,
+);
+
+const split = uniformMotion(48, 48, 0.4, 0);
+setVector(split, 1, 2, 10, 0, 'solved');
+setVector(split, 3, 2, 10, 0, 'solved');
+setVector(split, 2, 1, 0, 10, 'solved');
+setVector(split, 2, 3, 0, 10, 'solved');
+check('disagreeing nearby vectors leave the corridor unsupported', trajectoryMask(older, split, 24, 24).source === 'unsupported');
+
+const lonely = uniformMotion(48, 48, 0, 0);
+for (const vector of lonely.vectors) vector.source = 'unknown';
+setVector(lonely, 2, 2, 0.4, 0, 'solved');
+setVector(lonely, 3, 2, 10, 0, 'solved');
+check('two solved vectors are not a consensus', trajectoryMask(older, lonely, 24, 24).source === 'unsupported');
+
+const filled = uniformMotion(48, 48, 10, 0);
+for (const vector of filled.vectors) vector.source = 'prevailing';
+check('a fast filled vector does not open a corridor', trajectoryMask(older, filled, 24, 24).source === 'unsupported');
 
 check('trace is not meaningful rain', classifyOutcome(0, 0.05) === 'trace-only');
 check('a jump from light rain is intensification', classifyOutcome(2, 9) === 'intensified');
