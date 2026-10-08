@@ -1,0 +1,32 @@
+# Drains the silent-push wake queue every 15 minutes.
+#
+# Vercel Hobby only allows one cron per day, which is too coarse for devices
+# that come due roughly every two hours. This workflow is the supported
+# scheduler for that plan: it hits the same bearer-authenticated endpoint a
+# Vercel cron would. On Pro, `/api/cron/wake` can also be added to
+# server/vercel.json — both can coexist; the drain is idempotent.
+name: Wake due devices
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Drain wake queue
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          WAKE_URL: ${{ vars.WAKE_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET is not set; skipping."
+            exit 0
+          fi
+          URL="${WAKE_URL:-https://grey-sky-radar.vercel.app/api/cron/wake}"
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "$URL"

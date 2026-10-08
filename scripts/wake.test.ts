@@ -14,6 +14,7 @@ import {
   emptyRefreshState,
   nextWakeAfter,
   shouldAttempt,
+  STORM_WATCH_ALERT_MS,
   type RefreshState,
 } from '../lib/wakeSchedule';
 
@@ -176,6 +177,31 @@ console.log('\nthe suppression window is a floor on success only');
   check(
     'a normal wake hours later attempts everything',
     shouldAttempt(now - 2 * HOUR, now) === true,
+  );
+}
+
+console.log('\nstorm watch tightens the alert cadence');
+{
+  // Quiet weather: alerts just confirmed → due in two hours.
+  // Active storm products: same timestamps → due at the 30-minute watch cadence
+  // (still floored at 20 minutes by MIN_WAKE_GAP_MS when the math lands sooner).
+  const healthy = allFresh(now);
+  check(
+    'quiet weather waits the full alert cadence',
+    nextWakeAfter(healthy, now) === now + 2 * HOUR,
+  );
+  check(
+    'storm watch pulls the wake in to the watch cadence',
+    nextWakeAfter(healthy, now, { stormWatch: true }) === now + STORM_WATCH_ALERT_MS,
+    `got ${(nextWakeAfter(healthy, now, { stormWatch: true }) - now) / MIN} min`,
+  );
+
+  // Alerts confirmed 25 minutes ago under storm watch: due in 5 minutes, but
+  // the floor holds it at 20.
+  const recent = allFresh(now - 25 * MIN);
+  check(
+    'storm watch still respects the minimum gap',
+    nextWakeAfter(recent, now, { stormWatch: true }) === now + 20 * MIN,
   );
 }
 

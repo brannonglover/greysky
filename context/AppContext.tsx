@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 import { syncBackgroundWeatherTask } from '@/lib/backgroundWeather';
 import { syncPushRefreshTask } from '@/lib/pushRefresh';
+import { syncPushRegistration } from '@/lib/pushRegistration';
 import { skyFromWeather, type SkyPalette } from '@/lib/sky';
 import type { SavedLocation, Settings, WeatherBundle } from '@/lib/types';
 import {
@@ -227,6 +228,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await ensureNotificationSetup();
         }
         await syncWeatherNotifications(bundle, currentSettings.alerts, name, currentSettings.units);
+        // Refresh timestamps moved — ask for the next wake if the due time shifted.
+        void syncPushRegistration();
       })();
     },
     [],
@@ -523,6 +526,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // silent push can actually be delivered is a separate question.
     void syncBackgroundWeatherTask();
     void syncPushRefreshTask();
+    // Token + heartbeat: tells the server when this device wants a silent wake.
+    // Independent of alert prefs — cache warming helps every launch.
+    void syncPushRegistration();
     (async () => {
       const [storedSettings, storedLocations, storedSelected, perm, cached, cachedAwareness] = await Promise.all([
         loadSettings(),
@@ -618,6 +624,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (weather) {
         if (alertsEnabled(next.alerts)) {
           await ensureNotificationSetup();
+          // Permission may have just been granted — retry token registration.
+          void syncPushRegistration();
         }
         void syncWeatherNotifications(weather, next.alerts, placeName, next.units);
       }

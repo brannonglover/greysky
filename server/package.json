@@ -8,7 +8,7 @@
     "smoke": "tsx scripts/smoke.ts",
     "preview": "tsx scripts/radar-preview.ts",
     "verify": "tsx scripts/verify-phase1.ts",
-    "test": "tsx scripts/motion.test.ts && tsx scripts/hrrr-run.test.ts && tsx scripts/tropical.test.ts && tsx scripts/spc.test.ts && tsx scripts/nowcast-score.test.ts && tsx scripts/motion-synthetic.test.ts && tsx scripts/evolution-synthetic.test.ts && tsx scripts/nowcast-point.test.ts && tsx scripts/nowcast-case.test.ts && tsx scripts/nowcast-precursor.test.ts && tsx scripts/nowcast-structure.test.ts && tsx scripts/nowcast-verify.test.ts",
+    "test": "tsx scripts/motion.test.ts && tsx scripts/hrrr-run.test.ts && tsx scripts/tropical.test.ts && tsx scripts/spc.test.ts && tsx scripts/nowcast-score.test.ts && tsx scripts/motion-synthetic.test.ts && tsx scripts/evolution-synthetic.test.ts && tsx scripts/nowcast-point.test.ts && tsx scripts/nowcast-case.test.ts && tsx scripts/nowcast-precursor.test.ts && tsx scripts/nowcast-structure.test.ts && tsx scripts/nowcast-verify.test.ts && tsx scripts/push-wake.test.ts",
     "nowcast:point": "tsx scripts/nowcast-point-bench.ts",
     "nowcast:capture": "tsx scripts/nowcast-capture.ts",
     "nowcast:replay": "tsx scripts/nowcast-replay.ts",
@@ -29,6 +29,7 @@
   "type": "commonjs",
   "dependencies": {
     "@mattnucc/gribberish": "^1.7.0",
+    "@upstash/redis": "^1.39.0",
     "pngjs": "^7.0.0",
     "proj4": "^2.21.0"
   },

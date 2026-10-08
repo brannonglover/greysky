@@ -51,6 +51,20 @@ export const WAKE_AFTER_MS: Record<RefreshSource, number> = {
 };
 
 /**
+ * When the device already knows official storm alerts are in effect, check
+ * again sooner. A Thunderstorm Watch can become a Tornado Warning in minutes;
+ * waiting the quiet-weather two-hour cadence is how users learn about it from
+ * another app first. Still floored by `MIN_WAKE_GAP_MS` so we stay inside
+ * Apple's background-push budget.
+ */
+export const STORM_WATCH_ALERT_MS = 30 * 60_000;
+
+export type WakeOptions = {
+  /** True when the cached alert set currently includes a storm product. */
+  stormWatch?: boolean;
+};
+
+/**
  * How recently a source must have **succeeded** for a second wake to skip it.
  *
  * A silent push and a background task can land seconds apart for the same
@@ -92,12 +106,18 @@ export const MAX_WAKE_GAP_MS = 8 * 60 * 60_000;
  * not move, so the due time does not either. Opening the app is not evidence
  * that its data got refreshed.
  */
-export function nextWakeAfter(state: RefreshState, now: number = Date.now()): number {
+export function nextWakeAfter(
+  state: RefreshState,
+  now: number = Date.now(),
+  options: WakeOptions = {},
+): number {
   let earliest = Number.POSITIVE_INFINITY;
   for (const source of Object.keys(WAKE_AFTER_MS) as RefreshSource[]) {
     const verifiedAt = state[source];
+    const cadence =
+      source === 'alerts' && options.stormWatch ? STORM_WATCH_ALERT_MS : WAKE_AFTER_MS[source];
     // Never confirmed: due immediately, subject to the floor below.
-    earliest = Math.min(earliest, verifiedAt === 0 ? now : verifiedAt + WAKE_AFTER_MS[source]);
+    earliest = Math.min(earliest, verifiedAt === 0 ? now : verifiedAt + cadence);
   }
   if (!Number.isFinite(earliest)) earliest = now;
   return Math.min(Math.max(earliest, now + MIN_WAKE_GAP_MS), now + MAX_WAKE_GAP_MS);

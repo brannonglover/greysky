@@ -1,6 +1,9 @@
 # Server-driven refresh architecture
 
-**Status: proposed. Nothing in this document is implemented.**
+**Status: implemented.** Client registration, silent-push task, register/unregister
+endpoints, and the wake drain ship in this repo. Operational requirements that
+still need to be provisioned outside the code are listed under
+[Required configuration](#required-configuration).
 
 ```
 Silent push            →  expo-background-task     →  Foreground refresh
@@ -47,14 +50,16 @@ the whole cache, cancellations included.
 
 | Piece | Location |
 |---|---|
-| Shared refresh (extracted first) | `lib/refreshWeatherCaches.ts` |
-| Background-task wake | `lib/backgroundWeather.ts` (existing, becomes a thin caller) |
-| Push wake | `lib/pushRefresh.ts` (new) |
-| Token registration + heartbeat | `lib/pushRegistration.ts` (new) |
-| Registration endpoints | `server/api/push/register.ts`, `unregister.ts` (new) |
-| Due-queue sender | `server/api/cron/wake.ts` (new) |
+| Shared refresh | `lib/refreshWeatherCaches.ts` |
+| Background-task wake | `lib/backgroundWeather.ts` |
+| Push wake | `lib/pushRefresh.ts` |
+| Token registration + heartbeat | `lib/pushRegistration.ts` |
+| Registration endpoints | `server/api/push/register.ts`, `unregister.ts` |
+| Due-queue sender | `server/api/cron/wake.ts` |
+| Queue storage | `server/lib/push/store.ts` (Upstash Redis) |
+| External scheduler (Hobby) | `.github/workflows/wake-cron.yml` |
 
-No new server-side weather code. `server/lib/` is untouched.
+No server-side weather code. The push modules only store tokens and due times.
 
 ---
 
@@ -136,7 +141,8 @@ knows what is in its cache and how long each part stays useful:
 
 | Source | Wake cadence | Note |
 |---|---|---|
-| Forecast, alerts | 2 h | The binding pair |
+| Forecast, alerts | 2 h | The binding pair in quiet weather |
+| Alerts (storm watch) | 30 min | When the cached set already includes a storm product |
 | Regional sweep | 3 h | |
 | SPC outlook, tropical | 6 h | Published on slow cycles |
 | *Retry floor* | 20 min | Only binds after a failure |
@@ -314,17 +320,26 @@ a prebuild and a new build, not an OTA update.**
 only ever used local notifications, so there is probably no key yet; without one
 `getExpoPushTokenAsync` fails and nothing delivers. `eas credentials` handles it.
 
-**Server env** — `CRON_SECRET` (the bearer pattern Vercel documents for cron
-handlers), `EXPO_ACCESS_TOKEN` (optional, enables push security), plus storage
-credentials.
+**Server env** — set on the `grey-sky-radar` Vercel project:
 
-**`server/vercel.json`** — a `crons` entry for `/api/cron/wake` plus `functions`
-limits for the three new endpoints.
+| Variable | Required | Purpose |
+|---|---|---|
+| `UPSTASH_REDIS_REST_URL` | yes | Wake queue storage |
+| `UPSTASH_REDIS_REST_TOKEN` | yes | Wake queue storage |
+| `CRON_SECRET` | yes | Bearer auth for `/api/cron/wake` |
+| `EXPO_ACCESS_TOKEN` | optional | Expo push security |
 
-**Storage** — nothing is provisioned today. Vercel KV / Upstash Redis fits: one
-hash and one sorted set, which Redis expresses directly. (I could not read the
-project's environment variables to confirm — the MCP token lacks scope for
-`brannonglovers-projects` — so please verify nothing is already attached.)
+**GitHub Actions** — repository secret `CRON_SECRET` (same value as Vercel) so
+`.github/workflows/wake-cron.yml` can drain the queue every 15 minutes. Optional
+variable `WAKE_URL` overrides the production endpoint.
+
+**`server/vercel.json`** — `functions` limits for the three push endpoints.
+A Vercel `crons` entry for `*/15 * * * *` is omitted on purpose: Hobby rejects
+it at deploy time. Add one on Pro if you prefer Vercel to drive the drain;
+the GitHub Action can stay as a backup.
+
+**Storage** — Upstash Redis (REST). One hash per device and one sorted set for
+the due queue. Create a database and paste the REST URL/token into Vercel env.
 
 ## Verified against the live project
 

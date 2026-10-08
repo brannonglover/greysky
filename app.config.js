@@ -44,7 +44,10 @@ module.exports = {
       infoPlist: {
         NSLocationWhenInUseUsageDescription:
           'Grey Sky uses your location to show hyperlocal minute-by-minute weather at your exact spot.',
-        UIBackgroundModes: ['processing'],
+        // `processing` = expo-background-task; `remote-notification` = silent
+        // push wakes. Listed explicitly so an override here cannot drop the
+        // mode the notifications plugin also adds.
+        UIBackgroundModes: ['processing', 'remote-notification', 'fetch'],
       },
       bundleIdentifier: 'com.brannonglover.greysky',
       buildNumber,
