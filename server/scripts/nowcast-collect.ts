@@ -136,7 +136,12 @@ async function main() {
     }
   }
   do {
-    await cycle();
+    try {
+      await cycle();
+    } catch (error) {
+      console.error(error);
+      if (!loop) throw error;
+    }
     if (!loop) break;
     await new Promise((resolve) => setTimeout(resolve, intervalMin * 60_000));
   } while (loop);
