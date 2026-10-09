@@ -398,3 +398,63 @@ export async function loadInstallId(): Promise<string> {
     return randomId();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Last heartbeat successfully posted to the wake scheduler.
+// Used so registration is not per-launch traffic.
+// ---------------------------------------------------------------------------
+
+const HEARTBEAT_SENT_KEY = 'umbra.heartbeatSent';
+
+export type HeartbeatSnapshot = {
+  installId: string;
+  platform: string;
+  appVersion: string;
+  lastRefreshAt: number;
+  nextWakeAfter: number;
+};
+
+export type HeartbeatSent = {
+  heartbeat: HeartbeatSnapshot;
+  token: string;
+  sentAt: number;
+};
+
+export async function loadHeartbeatSent(): Promise<HeartbeatSent | null> {
+  try {
+    const raw = await AsyncStorage.getItem(HEARTBEAT_SENT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<HeartbeatSent>;
+    const hb = parsed.heartbeat;
+    if (
+      !hb ||
+      typeof hb.installId !== 'string' ||
+      typeof hb.nextWakeAfter !== 'number' ||
+      typeof parsed.token !== 'string' ||
+      typeof parsed.sentAt !== 'number'
+    ) {
+      return null;
+    }
+    return {
+      heartbeat: {
+        installId: hb.installId,
+        platform: typeof hb.platform === 'string' ? hb.platform : 'unknown',
+        appVersion: typeof hb.appVersion === 'string' ? hb.appVersion : 'unknown',
+        lastRefreshAt: typeof hb.lastRefreshAt === 'number' ? hb.lastRefreshAt : 0,
+        nextWakeAfter: hb.nextWakeAfter,
+      },
+      token: parsed.token,
+      sentAt: parsed.sentAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function saveHeartbeatSent(value: HeartbeatSent | null): Promise<void> {
+  if (!value) {
+    await AsyncStorage.removeItem(HEARTBEAT_SENT_KEY);
+    return;
+  }
+  await AsyncStorage.setItem(HEARTBEAT_SENT_KEY, JSON.stringify(value));
+}

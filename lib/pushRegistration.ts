@@ -1,22 +1,25 @@
 import Constants from 'expo-constants';
+import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { loadInstallId, loadRefreshState } from './storage';
+import { RADAR_API } from './radar/api';
+import {
+  loadHeartbeatSent,
+  loadInstallId,
+  loadRefreshState,
+  loadWeatherCache,
+  saveHeartbeatSent,
+} from './storage';
+import { isSevereWeatherComing } from './weather';
 import { nextWakeAfter, type RefreshSource, type RefreshState } from './wakeSchedule';
 
 /**
  * The device half of the wake queue.
  *
- * **Transport is deliberately absent.** Everything here is local: it assembles
- * what the device would tell a scheduler and computes when it wants waking, but
- * sends nothing. Two things have to exist before it can:
- *
- *   - an APNs push key on the EAS project, without which
- *     `getExpoPushTokenAsync` fails and there is no token to register
- *   - a `/api/push/register` endpoint with somewhere to store the record
- *
- * Neither is assumed here. `buildHeartbeat` is the seam: when the endpoint
- * exists, posting its output is the whole client change.
+ * Assembles a heartbeat, obtains an Expo push token when possible, and POSTs
+ * to `/api/push/register` so the server can silently wake this device when its
+ * own `nextWakeAfter` comes due. Failures are swallowed: the background-task
+ * and foreground tiers still run without this path.
  */
 
 export type Heartbeat = {
@@ -34,6 +37,10 @@ export type Heartbeat = {
   nextWakeAfter: number;
 };
 
+export type RegistrationPayload = Heartbeat & {
+  token: string;
+};
+
 const SOURCES: RefreshSource[] = ['forecast', 'alerts', 'tropical', 'outlook', 'regional'];
 
 /** The most recent successful fetch across all sources. */
@@ -45,6 +52,11 @@ function appVersion(): string {
   return Constants.expoConfig?.version ?? 'unknown';
 }
 
+function projectId(): string | null {
+  const extra = Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined;
+  return extra?.eas?.projectId ?? Constants.easConfig?.projectId ?? null;
+}
+
 /**
  * What this device would report to a wake scheduler right now.
  *
@@ -52,13 +64,18 @@ function appVersion(): string {
  * asserted on before any server exists to receive it.
  */
 export async function buildHeartbeat(now: number = Date.now()): Promise<Heartbeat> {
-  const [installId, state] = await Promise.all([loadInstallId(), loadRefreshState()]);
+  const [installId, state, cache] = await Promise.all([
+    loadInstallId(),
+    loadRefreshState(),
+    loadWeatherCache(),
+  ]);
+  const stormWatch = cache ? isSevereWeatherComing(cache.bundle.alerts) : false;
   return {
     installId,
     platform: Platform.OS,
     appVersion: appVersion(),
     lastRefreshAt: lastRefreshAt(state),
-    nextWakeAfter: nextWakeAfter(state, now),
+    nextWakeAfter: nextWakeAfter(state, now, { stormWatch }),
   };
 }
 
@@ -83,4 +100,72 @@ export function heartbeatChanged(
   if (previous.appVersion !== next.appVersion) return true;
   if (now - sentAt >= HEARTBEAT_MAX_AGE_MS) return true;
   return Math.abs(next.nextWakeAfter - previous.nextWakeAfter) >= HEARTBEAT_DRIFT_MS;
+}
+
+async function resolvePushToken(): Promise<string | null> {
+  if (Platform.OS === 'web') return null;
+  const id = projectId();
+  if (!id) return null;
+  try {
+    const result = await Notifications.getExpoPushTokenAsync({ projectId: id });
+    return result.data || null;
+  } catch {
+    // Offline, simulator, or missing APNs key — retry on a later launch.
+    return null;
+  }
+}
+
+/**
+ * Register (or refresh) this install with the wake scheduler.
+ *
+ * Safe to call from launch, after a refresh, or after notification permission
+ * changes. Does nothing on web, when the token cannot be obtained, or when the
+ * heartbeat has not moved enough to be worth another POST.
+ */
+export async function syncPushRegistration(): Promise<boolean> {
+  if (Platform.OS === 'web') return false;
+
+  try {
+    const [heartbeat, previous] = await Promise.all([buildHeartbeat(), loadHeartbeatSent()]);
+    if (
+      previous &&
+      !heartbeatChanged(previous.heartbeat, heartbeat, previous.sentAt)
+    ) {
+      return false;
+    }
+
+    const token = await resolvePushToken();
+    if (!token) return false;
+
+    const payload: RegistrationPayload = { ...heartbeat, token };
+    const response = await fetch(`${RADAR_API}/api/push/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) return false;
+
+    await saveHeartbeatSent({ heartbeat, token, sentAt: Date.now() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ask the scheduler to forget this install (notification opt-out).
+ */
+export async function unregisterPushRegistration(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    const installId = await loadInstallId();
+    await fetch(`${RADAR_API}/api/push/unregister`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ installId }),
+    });
+    await saveHeartbeatSent(null);
+  } catch {
+    // Best-effort; receipts will cull a dead token later.
+  }
 }

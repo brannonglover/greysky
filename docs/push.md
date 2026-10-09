@@ -1,6 +1,9 @@
 # Server-driven refresh architecture
 
-**Status: proposed. Nothing in this document is implemented.**
+**Status: implemented.** Client registration, silent-push task, register/unregister
+endpoints, and the wake drain ship in this repo. Operational requirements that
+still need to be provisioned outside the code are listed under
+[Required configuration](#required-configuration).
 
 ```
 Silent push            →  expo-background-task     →  Foreground refresh
@@ -47,14 +50,17 @@ the whole cache, cancellations included.
 
 | Piece | Location |
 |---|---|
-| Shared refresh (extracted first) | `lib/refreshWeatherCaches.ts` |
-| Background-task wake | `lib/backgroundWeather.ts` (existing, becomes a thin caller) |
-| Push wake | `lib/pushRefresh.ts` (new) |
-| Token registration + heartbeat | `lib/pushRegistration.ts` (new) |
-| Registration endpoints | `server/api/push/register.ts`, `unregister.ts` (new) |
-| Due-queue sender | `server/api/cron/wake.ts` (new) |
+| Shared refresh | `lib/refreshWeatherCaches.ts` |
+| Background-task wake | `lib/backgroundWeather.ts` |
+| Push wake | `lib/pushRefresh.ts` |
+| Token registration + heartbeat | `lib/pushRegistration.ts` |
+| Registration endpoints | `server/api/push/register.ts`, `unregister.ts` |
+| Due-queue sender | `server/api/cron/wake.ts` |
+| Queue storage | `server/lib/push/store.ts` (Supabase Postgres) |
+| Schema | `server/supabase/push_queue.sql` |
+| External scheduler (Hobby) | `.github/workflows/wake-cron.yml` |
 
-No new server-side weather code. `server/lib/` is untouched.
+No server-side weather code. The push modules only store tokens and due times.
 
 ---
 
@@ -136,7 +142,8 @@ knows what is in its cache and how long each part stays useful:
 
 | Source | Wake cadence | Note |
 |---|---|---|
-| Forecast, alerts | 2 h | The binding pair |
+| Forecast, alerts | 2 h | The binding pair in quiet weather |
+| Alerts (storm watch) | 30 min | When the cached set already includes a storm product |
 | Regional sweep | 3 h | |
 | SPC outlook, tropical | 6 h | Published on slow cycles |
 | *Retry floor* | 20 min | Only binds after a failure |
@@ -154,11 +161,11 @@ the client, next to the cache semantics it describes; the server holds only
 scheduling *mechanism*. Changing how aggressively the app warms itself becomes a
 client change, shippable over the air, with no server deploy.
 
-Storage is two keys:
+Storage is two Postgres tables (see `server/supabase/push_queue.sql`):
 
 ```
-device:<installId>   hash   token, lastRefreshAt, lastPushAt, budget, appVersion
-wake:due             zset   installIds, scored by nextWakeAfter
+push_devices   token, last_refresh_at, next_wake_after, push budget, app_version
+push_tickets   Expo receipt ids, due_at
 ```
 
 ## 4. The cron, which is a queue drain
@@ -166,15 +173,17 @@ wake:due             zset   installIds, scored by nextWakeAfter
 `/api/cron/wake`, bearer-authenticated with `CRON_SECRET`:
 
 ```
-ZRANGEBYSCORE wake:due 0 <now> LIMIT 0 100
+SELECT install_id FROM push_devices
+  WHERE next_wake_after <= now ORDER BY next_wake_after LIMIT 100
   → drop dormant (no refresh in 14 days) and budget-exhausted devices
   → send one batch of ≤100 silent pushes
   → reschedule each device at now + backoff
   → record tickets for receipt checking
 ```
 
-That is the entire server-side logic. It is O(log n) on the sorted set, makes
-**zero** upstream weather requests, and has no weather code to get wrong.
+That is the entire server-side logic. It is an indexed range scan on
+`next_wake_after`, makes **zero** upstream weather requests, and has no
+weather code to get wrong.
 
 Devices that are already fresh — because the user has been in the app — are not
 in the due window and are never touched. Dormant installs cost nothing. This is
@@ -314,17 +323,27 @@ a prebuild and a new build, not an OTA update.**
 only ever used local notifications, so there is probably no key yet; without one
 `getExpoPushTokenAsync` fails and nothing delivers. `eas credentials` handles it.
 
-**Server env** — `CRON_SECRET` (the bearer pattern Vercel documents for cron
-handlers), `EXPO_ACCESS_TOKEN` (optional, enables push security), plus storage
-credentials.
+**Server env** — set on the `grey-sky-radar` Vercel project:
 
-**`server/vercel.json`** — a `crons` entry for `/api/cron/wake` plus `functions`
-limits for the three new endpoints.
+| Variable | Required | Purpose |
+|---|---|---|
+| `SUPABASE_URL` | yes | Project URL (`https://xxxx.supabase.co`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes | Server-only key (bypasses RLS); never ship to the app |
+| `CRON_SECRET` | yes | Bearer auth for `/api/cron/wake` |
+| `EXPO_ACCESS_TOKEN` | optional | Expo push security |
 
-**Storage** — nothing is provisioned today. Vercel KV / Upstash Redis fits: one
-hash and one sorted set, which Redis expresses directly. (I could not read the
-project's environment variables to confirm — the MCP token lacks scope for
-`brannonglovers-projects` — so please verify nothing is already attached.)
+**Supabase schema** — run `server/supabase/push_queue.sql` once in the SQL
+editor. It creates `push_devices` and `push_tickets` with RLS on and no
+anon policies (only the service role talks to them).
+
+**GitHub Actions** — repository secret `CRON_SECRET` (same value as Vercel) so
+`.github/workflows/wake-cron.yml` can drain the queue every 15 minutes. Optional
+variable `WAKE_URL` overrides the production endpoint.
+
+**`server/vercel.json`** — `functions` limits for the three push endpoints.
+A Vercel `crons` entry for `*/15 * * * *` is omitted on purpose: Hobby rejects
+it at deploy time. Add one on Pro if you prefer Vercel to drive the drain;
+the GitHub Action can stay as a backup.
 
 ## Verified against the live project
 
@@ -397,7 +416,7 @@ separate escalation and keep-warm push budgets.
 | **Server upstream cost** | Zero | NWS per state + SPC + NHC, every tick, forever |
 | **Push volume** | One per device per due interval | Same, plus event pushes |
 | **Reliability** | Fails to "no pushes" → BGTask + foreground | Parser bug yields an empty fingerprint that reads as "quiet" and silently suppresses wakes |
-| **Server complexity** | 3 endpoints, 2 keys, no weather code | Above plus two parsing modules, point-in-polygon, fixtures, fingerprint versioning |
+| **Server complexity** | 3 endpoints, 2 tables, no weather code | Above plus two parsing modules, point-in-polygon, fixtures, fingerprint versioning |
 | **Ops hazard** | None | Changing the fingerprint shape invalidates every cell at once → mass push storm on deploy |
 | **Enables later** | Warm caches | Server-sent *visible* warnings |
 

@@ -4,6 +4,7 @@ import {
   syncTropicalNotifications,
   syncWeatherNotifications,
 } from './notifications';
+import { syncPushRegistration } from './pushRegistration';
 import { fetchRegionalAlerts } from './regional';
 import { fetchSpcOutlook } from './spc';
 import {
@@ -230,6 +231,12 @@ async function performRefresh(trigger: RefreshTrigger): Promise<RefreshOutcome> 
     outlook: outcomeOf(outlookResult),
     regional: outcomeOf(regionalResult),
   } satisfies Record<RefreshSource, SourceOutcome>;
+
+  // Tell the wake scheduler when this device next wants waking. Best-effort:
+  // a missing token or offline radio must not fail the refresh that just ran.
+  if (Object.values(sources).some((source) => source === 'ok')) {
+    void syncPushRegistration();
+  }
 
   return {
     trigger,
