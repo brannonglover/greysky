@@ -56,7 +56,8 @@ the whole cache, cancellations included.
 | Token registration + heartbeat | `lib/pushRegistration.ts` |
 | Registration endpoints | `server/api/push/register.ts`, `unregister.ts` |
 | Due-queue sender | `server/api/cron/wake.ts` |
-| Queue storage | `server/lib/push/store.ts` (Upstash Redis) |
+| Queue storage | `server/lib/push/store.ts` (Supabase Postgres) |
+| Schema | `server/supabase/push_queue.sql` |
 | External scheduler (Hobby) | `.github/workflows/wake-cron.yml` |
 
 No server-side weather code. The push modules only store tokens and due times.
@@ -160,11 +161,11 @@ the client, next to the cache semantics it describes; the server holds only
 scheduling *mechanism*. Changing how aggressively the app warms itself becomes a
 client change, shippable over the air, with no server deploy.
 
-Storage is two keys:
+Storage is two Postgres tables (see `server/supabase/push_queue.sql`):
 
 ```
-device:<installId>   hash   token, lastRefreshAt, lastPushAt, budget, appVersion
-wake:due             zset   installIds, scored by nextWakeAfter
+push_devices   token, last_refresh_at, next_wake_after, push budget, app_version
+push_tickets   Expo receipt ids, due_at
 ```
 
 ## 4. The cron, which is a queue drain
@@ -172,15 +173,17 @@ wake:due             zset   installIds, scored by nextWakeAfter
 `/api/cron/wake`, bearer-authenticated with `CRON_SECRET`:
 
 ```
-ZRANGEBYSCORE wake:due 0 <now> LIMIT 0 100
+SELECT install_id FROM push_devices
+  WHERE next_wake_after <= now ORDER BY next_wake_after LIMIT 100
   → drop dormant (no refresh in 14 days) and budget-exhausted devices
   → send one batch of ≤100 silent pushes
   → reschedule each device at now + backoff
   → record tickets for receipt checking
 ```
 
-That is the entire server-side logic. It is O(log n) on the sorted set, makes
-**zero** upstream weather requests, and has no weather code to get wrong.
+That is the entire server-side logic. It is an indexed range scan on
+`next_wake_after`, makes **zero** upstream weather requests, and has no
+weather code to get wrong.
 
 Devices that are already fresh — because the user has been in the app — are not
 in the due window and are never touched. Dormant installs cost nothing. This is
@@ -324,10 +327,14 @@ only ever used local notifications, so there is probably no key yet; without one
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `UPSTASH_REDIS_REST_URL` | yes | Wake queue storage |
-| `UPSTASH_REDIS_REST_TOKEN` | yes | Wake queue storage |
+| `SUPABASE_URL` | yes | Project URL (`https://xxxx.supabase.co`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes | Server-only key (bypasses RLS); never ship to the app |
 | `CRON_SECRET` | yes | Bearer auth for `/api/cron/wake` |
 | `EXPO_ACCESS_TOKEN` | optional | Expo push security |
+
+**Supabase schema** — run `server/supabase/push_queue.sql` once in the SQL
+editor. It creates `push_devices` and `push_tickets` with RLS on and no
+anon policies (only the service role talks to them).
 
 **GitHub Actions** — repository secret `CRON_SECRET` (same value as Vercel) so
 `.github/workflows/wake-cron.yml` can drain the queue every 15 minutes. Optional
@@ -337,9 +344,6 @@ variable `WAKE_URL` overrides the production endpoint.
 A Vercel `crons` entry for `*/15 * * * *` is omitted on purpose: Hobby rejects
 it at deploy time. Add one on Pro if you prefer Vercel to drive the drain;
 the GitHub Action can stay as a backup.
-
-**Storage** — Upstash Redis (REST). One hash per device and one sorted set for
-the due queue. Create a database and paste the REST URL/token into Vercel env.
 
 ## Verified against the live project
 
@@ -412,7 +416,7 @@ separate escalation and keep-warm push budgets.
 | **Server upstream cost** | Zero | NWS per state + SPC + NHC, every tick, forever |
 | **Push volume** | One per device per due interval | Same, plus event pushes |
 | **Reliability** | Fails to "no pushes" → BGTask + foreground | Parser bug yields an empty fingerprint that reads as "quiet" and silently suppresses wakes |
-| **Server complexity** | 3 endpoints, 2 keys, no weather code | Above plus two parsing modules, point-in-polygon, fixtures, fingerprint versioning |
+| **Server complexity** | 3 endpoints, 2 tables, no weather code | Above plus two parsing modules, point-in-polygon, fixtures, fingerprint versioning |
 | **Ops hazard** | None | Changing the fingerprint shape invalidates every cell at once → mass push storm on deploy |
 | **Enables later** | Warm caches | Server-sent *visible* warnings |
 

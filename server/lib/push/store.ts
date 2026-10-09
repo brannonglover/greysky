@@ -1,17 +1,17 @@
 /**
- * Device wake queue.
+ * Device wake queue on Supabase Postgres.
  *
- * Two keys, nothing weather-shaped:
- *   device:<installId>  — hash of token + bookkeeping
- *   wake:due            — sorted set of installIds scored by nextWakeAfter
+ * Two tables, nothing weather-shaped:
+ *   push_devices  — token + bookkeeping, ordered by next_wake_after
+ *   push_tickets  — Expo receipt checks due later
  *
- * Backed by Upstash Redis when UPSTASH_REDIS_REST_URL / TOKEN are set.
- * Without them the register endpoints refuse rather than invent a store —
- * a half-working queue that forgets devices on every cold start is worse
- * than no queue.
+ * Uses the service-role key (server-only). Without SUPABASE_URL /
+ * SUPABASE_SERVICE_ROLE_KEY the register endpoints refuse rather than invent
+ * a store — a half-working queue that forgets devices on every cold start is
+ * worse than no queue.
  */
 
-import { Redis } from '@upstash/redis';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 export type DeviceRecord = {
   token: string;
@@ -33,62 +33,95 @@ export type PushTicket = {
   dueAt: number;
 };
 
-const DEVICE_PREFIX = 'device:';
-const WAKE_DUE_KEY = 'wake:due';
-const TICKET_DUE_KEY = 'push:tickets';
+type DeviceRow = {
+  install_id: string;
+  token: string;
+  platform: string;
+  app_version: string;
+  last_refresh_at: number;
+  next_wake_after: number;
+  last_push_at: number;
+  push_count: number;
+  push_day: string;
+  updated_at: number;
+};
 
-export function deviceKey(installId: string): string {
-  return `${DEVICE_PREFIX}${installId}`;
-}
+type TicketRow = {
+  ticket_id: string;
+  install_id: string;
+  due_at: number;
+};
 
 export function utcDay(now: number = Date.now()): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
-let redis: Redis | null | undefined;
+let client: SupabaseClient | null | undefined;
 
 /** Lazy singleton. null means "configured off"; undefined means "not checked". */
-export function getRedis(): Redis | null {
-  if (redis !== undefined) return redis;
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) {
-    redis = null;
-    return redis;
+export function getSupabase(): SupabaseClient | null {
+  if (client !== undefined) return client;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    client = null;
+    return client;
   }
-  redis = new Redis({ url, token });
-  return redis;
+  client = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return client;
 }
 
 /** Test seam — reset between suites. */
-export function resetRedisForTests(): void {
-  redis = undefined;
+export function resetSupabaseForTests(): void {
+  client = undefined;
 }
 
 export function storageConfigured(): boolean {
-  return getRedis() !== null;
+  return getSupabase() !== null;
 }
 
-function asRecord(raw: Record<string, unknown> | null): DeviceRecord | null {
-  if (!raw || typeof raw.token !== 'string' || !raw.token) return null;
+function rowToRecord(row: DeviceRow): DeviceRecord {
   return {
-    token: raw.token,
-    platform: typeof raw.platform === 'string' ? raw.platform : 'unknown',
-    appVersion: typeof raw.appVersion === 'string' ? raw.appVersion : 'unknown',
-    lastRefreshAt: Number(raw.lastRefreshAt) || 0,
-    nextWakeAfter: Number(raw.nextWakeAfter) || 0,
-    lastPushAt: Number(raw.lastPushAt) || 0,
-    pushCount: Number(raw.pushCount) || 0,
-    pushDay: typeof raw.pushDay === 'string' ? raw.pushDay : '',
-    updatedAt: Number(raw.updatedAt) || 0,
+    token: row.token,
+    platform: row.platform || 'unknown',
+    appVersion: row.app_version || 'unknown',
+    lastRefreshAt: Number(row.last_refresh_at) || 0,
+    nextWakeAfter: Number(row.next_wake_after) || 0,
+    lastPushAt: Number(row.last_push_at) || 0,
+    pushCount: Number(row.push_count) || 0,
+    pushDay: row.push_day || '',
+    updatedAt: Number(row.updated_at) || 0,
+  };
+}
+
+function recordToRow(installId: string, record: DeviceRecord): DeviceRow {
+  return {
+    install_id: installId,
+    token: record.token,
+    platform: record.platform,
+    app_version: record.appVersion,
+    last_refresh_at: record.lastRefreshAt,
+    next_wake_after: record.nextWakeAfter,
+    last_push_at: record.lastPushAt,
+    push_count: record.pushCount,
+    push_day: record.pushDay,
+    updated_at: record.updatedAt,
   };
 }
 
 export async function getDevice(installId: string): Promise<DeviceRecord | null> {
-  const client = getRedis();
-  if (!client) return null;
-  const raw = await client.hgetall<Record<string, unknown>>(deviceKey(installId));
-  return asRecord(raw);
+  const db = getSupabase();
+  if (!db) return null;
+  const { data, error } = await db
+    .from('push_devices')
+    .select('*')
+    .eq('install_id', installId)
+    .maybeSingle();
+  if (error) throw new Error(`getDevice: ${error.message}`);
+  if (!data?.token) return null;
+  return rowToRecord(data as DeviceRow);
 }
 
 export async function upsertDevice(
@@ -102,8 +135,8 @@ export async function upsertDevice(
   },
   now: number = Date.now(),
 ): Promise<DeviceRecord> {
-  const client = getRedis();
-  if (!client) throw new Error('Push storage is not configured');
+  const db = getSupabase();
+  if (!db) throw new Error('Push storage is not configured');
 
   const existing = await getDevice(installId);
   const day = utcDay(now);
@@ -119,29 +152,33 @@ export async function upsertDevice(
     updatedAt: now,
   };
 
-  await client.hset(deviceKey(installId), record);
-  await client.zadd(WAKE_DUE_KEY, { score: record.nextWakeAfter, member: installId });
+  const { error } = await db.from('push_devices').upsert(recordToRow(installId, record));
+  if (error) throw new Error(`upsertDevice: ${error.message}`);
   return record;
 }
 
 export async function deleteDevice(installId: string): Promise<void> {
-  const client = getRedis();
-  if (!client) throw new Error('Push storage is not configured');
-  await client.del(deviceKey(installId));
-  await client.zrem(WAKE_DUE_KEY, installId);
+  const db = getSupabase();
+  if (!db) throw new Error('Push storage is not configured');
+  // Tickets cascade via FK; delete them explicitly too in case the FK is absent.
+  const tickets = await db.from('push_tickets').delete().eq('install_id', installId);
+  if (tickets.error) throw new Error(`deleteDevice tickets: ${tickets.error.message}`);
+  const devices = await db.from('push_devices').delete().eq('install_id', installId);
+  if (devices.error) throw new Error(`deleteDevice: ${devices.error.message}`);
 }
 
 /** Devices whose requested wake time is at or before `now`, oldest first. */
 export async function dueInstallIds(now: number, limit: number): Promise<string[]> {
-  const client = getRedis();
-  if (!client) return [];
-  // Upstash returns members ascending by score for zrange with score bounds.
-  const members = await client.zrange(WAKE_DUE_KEY, 0, now, {
-    byScore: true,
-    offset: 0,
-    count: limit,
-  });
-  return members.map(String);
+  const db = getSupabase();
+  if (!db) return [];
+  const { data, error } = await db
+    .from('push_devices')
+    .select('install_id')
+    .lte('next_wake_after', now)
+    .order('next_wake_after', { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`dueInstallIds: ${error.message}`);
+  return (data ?? []).map((row) => String((row as { install_id: string }).install_id));
 }
 
 /**
@@ -153,20 +190,17 @@ export async function rescheduleDevice(
   nextWakeAfter: number,
   now: number = Date.now(),
 ): Promise<DeviceRecord | null> {
-  const client = getRedis();
-  if (!client) return null;
   const existing = await getDevice(installId);
-  if (!existing) {
-    await client.zrem(WAKE_DUE_KEY, installId);
-    return null;
-  }
+  if (!existing) return null;
   const record: DeviceRecord = {
     ...existing,
     nextWakeAfter,
     updatedAt: now,
   };
-  await client.hset(deviceKey(installId), record);
-  await client.zadd(WAKE_DUE_KEY, { score: nextWakeAfter, member: installId });
+  const db = getSupabase();
+  if (!db) return null;
+  const { error } = await db.from('push_devices').upsert(recordToRow(installId, record));
+  if (error) throw new Error(`rescheduleDevice: ${error.message}`);
   return record;
 }
 
@@ -175,13 +209,8 @@ export async function markPushed(
   nextWakeAfter: number,
   now: number = Date.now(),
 ): Promise<DeviceRecord | null> {
-  const client = getRedis();
-  if (!client) return null;
   const existing = await getDevice(installId);
-  if (!existing) {
-    await client.zrem(WAKE_DUE_KEY, installId);
-    return null;
-  }
+  if (!existing) return null;
 
   const day = utcDay(now);
   const pushCount = existing.pushDay === day ? existing.pushCount + 1 : 1;
@@ -193,42 +222,45 @@ export async function markPushed(
     nextWakeAfter,
     updatedAt: now,
   };
-  await client.hset(deviceKey(installId), record);
-  await client.zadd(WAKE_DUE_KEY, { score: nextWakeAfter, member: installId });
+  const db = getSupabase();
+  if (!db) return null;
+  const { error } = await db.from('push_devices').upsert(recordToRow(installId, record));
+  if (error) throw new Error(`markPushed: ${error.message}`);
   return record;
 }
 
 export async function enqueueTicket(ticket: PushTicket): Promise<void> {
-  const client = getRedis();
-  if (!client) return;
-  await client.zadd(TICKET_DUE_KEY, {
-    score: ticket.dueAt,
-    member: JSON.stringify(ticket),
-  });
+  const db = getSupabase();
+  if (!db) return;
+  const row: TicketRow = {
+    ticket_id: ticket.ticketId,
+    install_id: ticket.installId,
+    due_at: ticket.dueAt,
+  };
+  const { error } = await db.from('push_tickets').upsert(row);
+  if (error) throw new Error(`enqueueTicket: ${error.message}`);
 }
 
 export async function dueTickets(now: number, limit: number): Promise<PushTicket[]> {
-  const client = getRedis();
-  if (!client) return [];
-  const members = await client.zrange(TICKET_DUE_KEY, 0, now, {
-    byScore: true,
-    offset: 0,
-    count: limit,
+  const db = getSupabase();
+  if (!db) return [];
+  const { data, error } = await db
+    .from('push_tickets')
+    .select('ticket_id, install_id, due_at')
+    .lte('due_at', now)
+    .order('due_at', { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`dueTickets: ${error.message}`);
+  return (data ?? []).map((row) => {
+    const r = row as TicketRow;
+    return { ticketId: r.ticket_id, installId: r.install_id, dueAt: Number(r.due_at) || 0 };
   });
-  const tickets: PushTicket[] = [];
-  for (const member of members) {
-    try {
-      const parsed = JSON.parse(String(member)) as PushTicket;
-      if (parsed?.ticketId && parsed?.installId) tickets.push(parsed);
-    } catch {
-      // Drop malformed entries below.
-    }
-  }
-  return tickets;
 }
 
 export async function removeTickets(tickets: PushTicket[]): Promise<void> {
-  const client = getRedis();
-  if (!client || tickets.length === 0) return;
-  await client.zrem(TICKET_DUE_KEY, ...tickets.map((ticket) => JSON.stringify(ticket)));
+  const db = getSupabase();
+  if (!db || tickets.length === 0) return;
+  const ids = tickets.map((ticket) => ticket.ticketId);
+  const { error } = await db.from('push_tickets').delete().in('ticket_id', ids);
+  if (error) throw new Error(`removeTickets: ${error.message}`);
 }
